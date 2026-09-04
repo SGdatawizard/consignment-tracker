@@ -3,18 +3,22 @@ import { useStore } from '../data/store'
 import { SPECIALISTS } from '../data/users'
 import StatTile from '../components/StatTile'
 import Badge from '../components/Badge'
+import TaskCard from '../components/TaskCard'
+import NewTaskForm from '../components/NewTaskForm'
 import {
   deriveStatus, STATUS, STATUS_LABEL, urgency, countdownLabel,
   daysInDept, daysWithCurrentSpecialist, wasReassigned,
   nextAction, sortByUrgency, formatDate, plural,
 } from '../lib/consignments'
+import { sortTasks, taskUrgency } from '../lib/tasks'
 
 export default function Overview() {
-  const { consignments, history, reassign } = useStore()
+  const { consignments, tasks, history, reassign, reassignTask } = useStore()
   const [filter, setFilter] = useState('open')
   const [groupBySpecialist, setGroupBySpecialist] = useState(true)
 
   const open = consignments.filter((c) => deriveStatus(c) !== STATUS.COMPLETE)
+  const openTasks = tasks.filter((t) => !t.completed)
 
   const stats = useMemo(() => ({
     open: open.length,
@@ -22,8 +26,10 @@ export default function Overview() {
     awaiting: open.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR).length,
     overdue: open.filter((c) => urgency(c) === 'overdue').length,
     soon: open.filter((c) => urgency(c) === 'soon').length,
+    tasks: openTasks.length,
+    tasksOverdue: openTasks.filter((t) => taskUrgency(t) === 'overdue').length,
     noLocation: consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE && !c.storage_location).length,
-  }), [consignments, open])
+  }), [consignments, open, openTasks])
 
   const visible = useMemo(() => {
     let list = consignments
@@ -32,6 +38,7 @@ export default function Overview() {
     if (filter === 'awaiting') list = open.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR)
     if (filter === 'complete') list = consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE)
     if (filter === 'no_location') list = consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE && !c.storage_location)
+    if (filter === 'tasks') list = []
     return sortByUrgency(list)
   }, [consignments, open, filter])
 
@@ -44,14 +51,18 @@ export default function Overview() {
     })).filter((g) => g.items.length > 0)
   }, [visible, groupBySpecialist])
 
+  const showingTasks = filter === 'tasks'
+
   return (
     <>
       <header style={{ marginBottom: 'var(--space-5)' }}>
         <h1>Overview</h1>
         <p style={{ color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
-          {stats.open} open {plural(stats.open, 'consignment')} across {SPECIALISTS.length} specialists
+          {stats.open} open {plural(stats.open, 'consignment')} and {stats.tasks} open {plural(stats.tasks, 'task')} across {SPECIALISTS.length} specialists
         </p>
       </header>
+
+      <NewTaskForm />
 
       <div
         style={{
@@ -66,6 +77,7 @@ export default function Overview() {
         <StatTile label="Awaiting vendor" value={stats.awaiting} />
         <StatTile label="Due within 7 days" value={stats.soon} tone="gold" />
         <StatTile label="Overdue" value={stats.overdue} tone="danger" />
+        <StatTile label="Open tasks" value={stats.tasks} tone={stats.tasksOverdue > 0 ? 'danger' : 'neutral'} />
       </div>
 
       <div
@@ -77,68 +89,76 @@ export default function Overview() {
           marginBottom: 'var(--space-5)',
         }}
       >
-        <Filters value={filter} onChange={setFilter} counts={stats} />
-        <label
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-2)',
-            marginLeft: 'auto',
-            fontSize: 'var(--size-sm)',
-            color: 'var(--text-muted)',
-          }}
-        >
-          <input
-            type="checkbox"
-            checked={groupBySpecialist}
-            onChange={(e) => setGroupBySpecialist(e.target.checked)}
-            style={{ width: '18px', height: '18px' }}
-          />
-          Group by specialist
-        </label>
+        <Filters value={filter} onChange={setFilter} />
+        {!showingTasks && (
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-2)',
+              marginLeft: 'auto',
+              fontSize: 'var(--size-sm)',
+              color: 'var(--text-muted)',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={groupBySpecialist}
+              onChange={(e) => setGroupBySpecialist(e.target.checked)}
+              style={{ width: '18px', height: '18px' }}
+            />
+            Group by specialist
+          </label>
+        )}
       </div>
 
-      {visible.length === 0 && (
-        <p
-          style={{
-            background: 'var(--surface-sunken)',
-            borderRadius: 'var(--radius)',
-            padding: 'var(--space-5)',
-            color: 'var(--text-muted)',
-          }}
-        >
-          Nothing matches that filter.
-        </p>
-      )}
-
-      {groups.map((group) => (
-        <section key={group.id} style={{ marginBottom: 'var(--space-6)' }}>
-          {group.name && (
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
-              <h2 style={{ fontSize: 'var(--size-lg)' }}>{group.name}</h2>
-              <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
-                {group.items.length}
-              </span>
-            </div>
+      {showingTasks ? (
+        <TaskList tasks={openTasks} onReassign={reassignTask} />
+      ) : (
+        <>
+          {visible.length === 0 && (
+            <p
+              style={{
+                background: 'var(--surface-sunken)',
+                borderRadius: 'var(--radius)',
+                padding: 'var(--space-5)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              Nothing matches that filter.
+            </p>
           )}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-            {group.items.map((c) => (
-              <Row key={c.id} consignment={c} history={history} onReassign={reassign} />
-            ))}
-          </div>
-        </section>
-      ))}
 
-      {stats.noLocation > 0 && filter !== 'no_location' && (
-        <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
-          {stats.noLocation} completed {plural(stats.noLocation, 'consignment')} with no storage location recorded.{' '}
-          <button
-            onClick={() => setFilter('no_location')}
-            style={{ color: 'var(--navy)', textDecoration: 'underline', fontWeight: 500 }}
-          >
-            Show them
-          </button>
-        </p>
+          {groups.map((group) => (
+            <section key={group.id} style={{ marginBottom: 'var(--space-6)' }}>
+              {group.name && (
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+                  <h2 style={{ fontSize: 'var(--size-lg)' }}>{group.name}</h2>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
+                    {group.items.length}
+                  </span>
+                </div>
+              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                {group.items.map((c) => (
+                  <Row key={c.id} consignment={c} history={history} onReassign={reassign} />
+                ))}
+              </div>
+            </section>
+          ))}
+
+          {stats.noLocation > 0 && filter !== 'no_location' && (
+            <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
+              {stats.noLocation} completed {plural(stats.noLocation, 'consignment')} with no storage location recorded.{' '}
+              <button
+                onClick={() => setFilter('no_location')}
+                style={{ color: 'var(--navy)', textDecoration: 'underline', fontWeight: 500 }}
+              >
+                Show them
+              </button>
+            </p>
+          )}
+        </>
       )}
     </>
   )
@@ -148,6 +168,7 @@ const FILTERS = [
   { id: 'open', label: 'Open' },
   { id: 'overdue', label: 'Overdue' },
   { id: 'awaiting', label: 'Awaiting vendor' },
+  { id: 'tasks', label: 'Tasks' },
   { id: 'complete', label: 'Complete' },
 ]
 
@@ -177,6 +198,72 @@ function Filters({ value, onChange }) {
         )
       })}
     </div>
+  )
+}
+
+function TaskList({ tasks, onReassign }) {
+  if (tasks.length === 0) {
+    return (
+      <p
+        style={{
+          background: 'var(--surface-sunken)',
+          borderRadius: 'var(--radius)',
+          padding: 'var(--space-5)',
+          color: 'var(--text-muted)',
+        }}
+      >
+        No outstanding tasks.
+      </p>
+    )
+  }
+
+  return (
+    <>
+      {SPECIALISTS.map((s) => {
+        const items = sortTasks(tasks.filter((t) => t.assigned_to === s.id))
+        if (items.length === 0) return null
+        return (
+          <section key={s.id} style={{ marginBottom: 'var(--space-6)' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+              <h2 style={{ fontSize: 'var(--size-lg)' }}>{s.full_name}</h2>
+              <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>{items.length}</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+              {items.map((t) => (
+                <TaskCard
+                  key={t.id}
+                  task={t}
+                  footer={
+                    <>
+                      <label htmlFor={`task-assign-${t.id}`} className="sr-only">
+                        Reassign {t.title}
+                      </label>
+                      <select
+                        id={`task-assign-${t.id}`}
+                        value={t.assigned_to}
+                        onChange={(e) => onReassign(t.id, e.target.value)}
+                        style={{
+                          height: '38px',
+                          padding: '0 var(--space-2)',
+                          borderRadius: 'var(--radius)',
+                          border: '1px solid var(--border-strong)',
+                          background: 'var(--surface)',
+                          maxWidth: '180px',
+                        }}
+                      >
+                        {SPECIALISTS.map((opt) => (
+                          <option key={opt.id} value={opt.id}>{opt.full_name}</option>
+                        ))}
+                      </select>
+                    </>
+                  }
+                />
+              ))}
+            </div>
+          </section>
+        )
+      })}
+    </>
   )
 }
 
