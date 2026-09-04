@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { StoreProvider } from './data/store'
 import Layout from './components/Layout'
+import MyWork from './pages/MyWork'
 
 export default function App() {
   return (
@@ -10,7 +11,7 @@ export default function App() {
           <Route path="/" element={<Navigate to="/overview" replace />} />
           <Route path="/overview" element={<Placeholder title="Overview" />} />
           <Route path="/auctions" element={<Placeholder title="Book in" />} />
-          <Route path="/my-work" element={<Placeholder title="My work" />} />
+          <Route path="/my-work" element={<MyWork />} />
           <Route path="*" element={<Placeholder title="Page not found" />} />
         </Route>
       </Routes>
