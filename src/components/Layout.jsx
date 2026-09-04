@@ -1,8 +1,12 @@
 import { Outlet } from 'react-router-dom'
 import Sidebar from './Sidebar'
 import UndoBar from './UndoBar'
+import { useStore } from '../data/store'
+import { Loading, ErrorBar } from './Loading'
 
 export default function Layout() {
+  const { loading, error, dismissError } = useStore()
+
   return (
     <div
       style={{
@@ -13,7 +17,8 @@ export default function Layout() {
     >
       <Sidebar />
       <main style={{ padding: 'var(--space-6)', maxWidth: '1100px', width: '100%' }}>
-        <Outlet />
+        <ErrorBar message={error} onDismiss={dismissError} />
+        {loading ? <Loading /> : <Outlet />}
       </main>
       <UndoBar />
     </div>
