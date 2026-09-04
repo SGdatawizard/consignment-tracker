@@ -1,15 +1,14 @@
 import { NavLink } from 'react-router-dom'
-import { useStore } from '../data/store'
-
-const NAV = [
-  { to: '/overview', label: 'Overview', roles: ['head_of_dept', 'auctions', 'admin'] },
-  { to: '/auctions', label: 'Book in', roles: ['auctions', 'head_of_dept', 'admin'] },
-  { to: '/my-work', label: 'My work', roles: ['specialist', 'head_of_dept', 'admin'] },
-]
+import { useAuth, CAN } from '../data/auth'
 
 export default function Sidebar() {
-  const { currentUser, users, setCurrentUserId } = useStore()
-  const items = NAV.filter((item) => item.roles.includes(currentUser.role))
+  const { profile, signOut } = useAuth()
+
+  const items = [
+    { to: '/overview', label: 'Overview', show: true },
+    { to: '/auctions', label: 'Book in', show: CAN.bookIn(profile.role) },
+    { to: '/my-work', label: 'My work', show: CAN.ownWork(profile.role) },
+  ].filter((i) => i.show)
 
   return (
     <nav
@@ -39,35 +38,33 @@ export default function Sidebar() {
       </ul>
 
       <div style={{ marginTop: 'auto' }}>
-        <label
-          htmlFor="user-switch"
-          style={{ display: 'block', fontSize: 'var(--size-xs)', color: 'var(--text-on-dark-muted)', marginBottom: 'var(--space-2)' }}
-        >
-          Demo: view as
-        </label>
-        <select
-          id="user-switch"
-          value={currentUser.id}
-          onChange={(e) => setCurrentUserId(e.target.value)}
+        <p style={{ fontSize: 'var(--size-sm)', fontWeight: 500 }}>{profile.full_name}</p>
+        <p style={{ fontSize: 'var(--size-xs)', color: 'var(--text-on-dark-muted)', marginBottom: 'var(--space-3)' }}>
+          {ROLE_LABEL[profile.role]}
+        </p>
+        <button
+          onClick={signOut}
           style={{
             width: '100%',
             height: 'var(--control-height)',
-            padding: '0 var(--space-3)',
             borderRadius: 'var(--radius)',
             border: '1px solid var(--navy-soft)',
-            background: 'var(--navy-soft)',
-            color: 'var(--text-on-dark)',
+            color: 'var(--text-on-dark-muted)',
+            fontWeight: 500,
           }}
         >
-          {users.map((u) => (
-            <option key={u.id} value={u.id} style={{ color: '#131A2B' }}>
-              {u.full_name}
-            </option>
-          ))}
-        </select>
+          Sign out
+        </button>
       </div>
     </nav>
   )
+}
+
+const ROLE_LABEL = {
+  head_of_dept: 'Head of department',
+  auctions: 'Auctions',
+  specialist: 'Specialist',
+  admin: 'Administrator',
 }
 
 function navLinkStyle({ isActive }) {
