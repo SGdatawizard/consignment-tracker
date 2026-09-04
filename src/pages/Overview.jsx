@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../data/store'
-import { SPECIALISTS } from '../data/users'
 import StatTile from '../components/StatTile'
 import Badge from '../components/Badge'
 import TaskCard from '../components/TaskCard'
 import NewTaskForm from '../components/NewTaskForm'
+import { useAuth, CAN } from '../data/auth'
 import {
   deriveStatus, STATUS, STATUS_LABEL, urgency, countdownLabel,
   daysInDept, daysWithCurrentSpecialist, wasReassigned,
@@ -13,7 +13,10 @@ import {
 import { sortTasks, taskUrgency } from '../lib/tasks'
 
 export default function Overview() {
-  const { consignments, tasks, history, reassign, reassignTask } = useStore()
+  const { consignments, tasks, history, specialists, reassign, reassignTask } = useStore()
+  const { profile } = useAuth()
+  const canManage = CAN.manage(profile.role)
+
   const [filter, setFilter] = useState('open')
   const [groupBySpecialist, setGroupBySpecialist] = useState(true)
 
@@ -44,12 +47,17 @@ export default function Overview() {
 
   const groups = useMemo(() => {
     if (!groupBySpecialist) return [{ id: 'all', name: null, items: visible }]
-    return SPECIALISTS.map((s) => ({
+    const assigned = specialists.map((s) => ({
       id: s.id,
       name: s.full_name,
       items: visible.filter((c) => c.assigned_to === s.id),
-    })).filter((g) => g.items.length > 0)
-  }, [visible, groupBySpecialist])
+    }))
+    const unassigned = visible.filter((c) => !specialists.some((s) => s.id === c.assigned_to))
+    if (unassigned.length) {
+      assigned.push({ id: 'none', name: 'Unassigned', items: unassigned })
+    }
+    return assigned.filter((g) => g.items.length > 0)
+  }, [visible, groupBySpecialist, specialists])
 
   const showingTasks = filter === 'tasks'
 
@@ -58,11 +66,11 @@ export default function Overview() {
       <header style={{ marginBottom: 'var(--space-5)' }}>
         <h1>Overview</h1>
         <p style={{ color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
-          {stats.open} open {plural(stats.open, 'consignment')} and {stats.tasks} open {plural(stats.tasks, 'task')} across {SPECIALISTS.length} specialists
+          {stats.open} open {plural(stats.open, 'consignment')} and {stats.tasks} open {plural(stats.tasks, 'task')} across {specialists.length} specialists
         </p>
       </header>
 
-      <NewTaskForm />
+      {canManage && <NewTaskForm />}
 
       <div
         style={{
@@ -113,7 +121,12 @@ export default function Overview() {
       </div>
 
       {showingTasks ? (
-        <TaskList tasks={openTasks} onReassign={reassignTask} />
+        <TaskList
+          tasks={openTasks}
+          specialists={specialists}
+          canManage={canManage}
+          onReassign={reassignTask}
+        />
       ) : (
         <>
           {visible.length === 0 && (
@@ -141,7 +154,14 @@ export default function Overview() {
               )}
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
                 {group.items.map((c) => (
-                  <Row key={c.id} consignment={c} history={history} onReassign={reassign} />
+                  <Row
+                    key={c.id}
+                    consignment={c}
+                    history={history}
+                    specialists={specialists}
+                    canManage={canManage}
+                    onReassign={reassign}
+                  />
                 ))}
               </div>
             </section>
@@ -201,7 +221,43 @@ function Filters({ value, onChange }) {
   )
 }
 
-function TaskList({ tasks, onReassign }) {
+function AssigneePicker({ id, label, value, specialists, canManage, onChange }) {
+  const name = specialists.find((s) => s.id === value)?.full_name || 'Unassigned'
+
+  if (!canManage) {
+    return (
+      <span style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        {name}
+      </span>
+    )
+  }
+
+  return (
+    <>
+      <label htmlFor={id} className="sr-only">{label}</label>
+      <select
+        id={id}
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          height: '38px',
+          padding: '0 var(--space-2)',
+          borderRadius: 'var(--radius)',
+          border: '1px solid var(--border-strong)',
+          background: 'var(--surface)',
+          maxWidth: '160px',
+        }}
+      >
+        {!value && <option value="">Unassigned</option>}
+        {specialists.map((s) => (
+          <option key={s.id} value={s.id}>{s.full_name}</option>
+        ))}
+      </select>
+    </>
+  )
+}
+
+function TaskList({ tasks, specialists, canManage, onReassign }) {
   if (tasks.length === 0) {
     return (
       <p
@@ -219,7 +275,7 @@ function TaskList({ tasks, onReassign }) {
 
   return (
     <>
-      {SPECIALISTS.map((s) => {
+      {specialists.map((s) => {
         const items = sortTasks(tasks.filter((t) => t.assigned_to === s.id))
         if (items.length === 0) return null
         return (
@@ -234,28 +290,16 @@ function TaskList({ tasks, onReassign }) {
                   key={t.id}
                   task={t}
                   footer={
-                    <>
-                      <label htmlFor={`task-assign-${t.id}`} className="sr-only">
-                        Reassign {t.title}
-                      </label>
-                      <select
+                    canManage ? (
+                      <AssigneePicker
                         id={`task-assign-${t.id}`}
+                        label={`Reassign ${t.title}`}
                         value={t.assigned_to}
-                        onChange={(e) => onReassign(t.id, e.target.value)}
-                        style={{
-                          height: '38px',
-                          padding: '0 var(--space-2)',
-                          borderRadius: 'var(--radius)',
-                          border: '1px solid var(--border-strong)',
-                          background: 'var(--surface)',
-                          maxWidth: '180px',
-                        }}
-                      >
-                        {SPECIALISTS.map((opt) => (
-                          <option key={opt.id} value={opt.id}>{opt.full_name}</option>
-                        ))}
-                      </select>
-                    </>
+                        specialists={specialists}
+                        canManage={canManage}
+                        onChange={(to) => onReassign(t.id, to)}
+                      />
+                    ) : null
                   }
                 />
               ))}
@@ -267,7 +311,7 @@ function TaskList({ tasks, onReassign }) {
   )
 }
 
-function Row({ consignment: c, history, onReassign }) {
+function Row({ consignment: c, history, specialists, canManage, onReassign }) {
   const status = deriveStatus(c)
   const level = urgency(c)
   const withCurrent = daysWithCurrentSpecialist(c, history)
@@ -292,7 +336,6 @@ function Row({ consignment: c, history, onReassign }) {
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         borderLeft: `4px solid ${accent}`,
-        borderRadius: 0,
         padding: 'var(--space-3) var(--space-4)',
       }}
     >
@@ -325,26 +368,14 @@ function Row({ consignment: c, history, onReassign }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
         {status === STATUS.COMPLETE && !c.storage_location && <Badge tone="gold">No location</Badge>}
-        <label htmlFor={`assign-${c.id}`} className="sr-only">
-          Assign {c.receipt_number} to
-        </label>
-        <select
+        <AssigneePicker
           id={`assign-${c.id}`}
+          label={`Assign ${c.receipt_number} to`}
           value={c.assigned_to}
-          onChange={(e) => onReassign(c.id, e.target.value)}
-          style={{
-            height: '38px',
-            padding: '0 var(--space-2)',
-            borderRadius: 'var(--radius)',
-            border: '1px solid var(--border-strong)',
-            background: 'var(--surface)',
-            maxWidth: '150px',
-          }}
-        >
-          {SPECIALISTS.map((s) => (
-            <option key={s.id} value={s.id}>{s.full_name}</option>
-          ))}
-        </select>
+          specialists={specialists}
+          canManage={canManage}
+          onChange={(to) => onReassign(c.id, to)}
+        />
       </div>
     </div>
   )
