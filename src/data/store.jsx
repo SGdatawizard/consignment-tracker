@@ -2,12 +2,14 @@ import { createContext, useContext, useState } from 'react'
 import { SEED_CONSIGNMENTS, SEED_ASSIGNMENT_HISTORY } from './seedConsignments'
 import { USERS } from './users'
 import { deriveStatus, STATUS } from '../lib/consignments'
+import { SEED_TASKS } from './seedTasks'
 
 const StoreContext = createContext(null)
 
 export function StoreProvider({ children }) {
   const [consignments, setConsignments] = useState(SEED_CONSIGNMENTS)
   const [history, setHistory] = useState(SEED_ASSIGNMENT_HISTORY)
+  const [tasks, setTasks] = useState(SEED_TASKS)
   const [currentUserId, setCurrentUserId] = useState('u3')
   const [lastChange, setLastChange] = useState(null)
 
@@ -43,6 +45,38 @@ export function StoreProvider({ children }) {
     )
   }
 
+    function addTask({ title, detail, assigned_to, due_date }) {
+    const record = {
+      id: `t${Date.now()}`,
+      title: title.trim(),
+      detail: detail.trim(),
+      assigned_to,
+      created_by: currentUserId,
+      created_at: new Date().toISOString(),
+      due_date: due_date || null,
+      completed: false,
+      completed_at: null,
+    }
+    setTasks((prev) => [record, ...prev])
+    return record
+  }
+
+  function toggleTask(id, completed) {
+    setTasks((prev) =>
+      prev.map((t) =>
+        t.id === id
+          ? { ...t, completed, completed_at: completed ? new Date().toISOString() : null }
+          : t
+      )
+    )
+  }
+
+  function reassignTask(taskId, toUserId) {
+    setTasks((prev) =>
+      prev.map((t) => (t.id === taskId ? { ...t, assigned_to: toUserId } : t))
+    )
+  }
+  
   function undoLastChange() {
     if (!lastChange) return
     setConsignments((prev) =>
@@ -112,6 +146,10 @@ export function StoreProvider({ children }) {
     lastChange,
     undoLastChange,
     dismissLastChange,
+    tasks,
+    addTask,
+    toggleTask,
+    reassignTask,
   }
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>
