@@ -5,10 +5,19 @@ import { buildDigest, specialistText, managerText, mailtoLink } from '../lib/dig
 import { countdownLabel, urgency, formatDateLong, plural } from '../lib/consignments'
 import { taskDueLabel, taskUrgency } from '../lib/tasks'
 
-const TONE = { overdue: 'danger', soon: 'gold', frozen: 'navy', ok: 'neutral', none: 'neutral', done: 'success' }
+const TONE = {
+  overdue: 'danger',
+  soon: 'gold',
+  frozen: 'navy',
+  ok: 'neutral',
+  none: 'neutral',
+  done: 'success',
+}
+
+const SUBJECT = 'Your outstanding work this week'
 
 export default function Digest() {
-  const { consignments, tasks, specialists, currentUser } = useStore()
+  const { consignments, tasks, specialists } = useStore()
   const [copied, setCopied] = useState(null)
 
   const digest = useMemo(
@@ -27,8 +36,7 @@ export default function Digest() {
   }
 
   function download() {
-    const text = managerText(digest)
-    const blob = new Blob([text], { type: 'text/plain' })
+    const blob = new Blob([managerText(digest)], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -36,8 +44,6 @@ export default function Digest() {
     a.click()
     URL.revokeObjectURL(url)
   }
-
-  const subjectFor = () => 'Your outstanding work this week'
 
   return (
     <>
@@ -58,8 +64,7 @@ export default function Digest() {
         }}
       >
         <p style={{ marginBottom: 'var(--space-3)' }}>
-          <strong>Open in email</strong> starts a message in your mail app with everything filled in.
-          <strong> Copy</strong> puts the text on your clipboard to paste in yourself.
+          Open in email starts a message in your mail app with everything filled in. Copy puts the text on your clipboard to paste in yourself.
         </p>
         <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
           <ActionButton onClick={() => copy('manager', managerText(digest))}>
@@ -75,98 +80,14 @@ export default function Digest() {
         </p>
       )}
 
-      {digest.sections.map((section) => {
-        const body = specialistText(section)
-        const nothing = !section.consignments.length && !section.tasks.length
-
-        return (
-          <section
-            key={section.person.id}
-            style={{
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-lg)',
-              padding: 'var(--space-5)',
-              marginBottom: 'var(--space-4)',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'flex-start',
-                gap: 'var(--space-4)',
-                flexWrap: 'wrap',
-                marginBottom: 'var(--space-4)',
-              }}
-            >
-              <div>
-                <h2 style={{ fontSize: 'var(--size-lg)' }}>{section.person.full_name}</h2>
-                <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
-                  {section.person.email}
-                </p>
-              </div>
-              {!nothing && (
-                <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-                  <ActionButton onClick={() => copy(section.person.id, body)}>
-                    {copied === section.person.id ? 'Copied' : 'Copy'}
-                  </ActionButton>
-                  
-                    href={mailtoLink(section.person.email, subjectFor(), body)}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      height: 'var(--control-height)',
-                      padding: '0 var(--space-4)',
-                      borderRadius: 'var(--radius)',
-                      background: 'var(--navy)',
-                      color: 'var(--text-on-dark)',
-                      textDecoration: 'none',
-                      fontWeight: 500,
-                      fontSize: 'var(--size-sm)',
-                    }}
-                  >
-                    Open in email
-                  </a>
-                </div>
-              )}
-            </div>
-
-            {nothing ? (
-              <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
-                Nothing outstanding. No need to email.
-              </p>
-            ) : (
-              <>
-                {section.tasks.length > 0 && (
-                  <List
-                    heading="Tasks"
-                    items={section.tasks.map((t) => ({
-                      key: t.id,
-                      main: t.title,
-                      note: taskDueLabel(t),
-                      tone: TONE[taskUrgency(t)],
-                    }))}
-                  />
-                )}
-                {section.consignments.length > 0 && (
-                  <List
-                    heading="Consignments"
-                    items={section.consignments.map((c) => ({
-                      key: c.id,
-                      main: c.receipt_number,
-                      mono: true,
-                      sub: `${c.vendor_name} · ${c.box_count} ${plural(c.box_count, 'box')}`,
-                      note: countdownLabel(c),
-                      tone: TONE[urgency(c)],
-                    }))}
-                  />
-                )}
-              </>
-            )}
-          </section>
-        )
-      })}
+      {digest.sections.map((section) => (
+        <SpecialistSection
+          key={section.person.id}
+          section={section}
+          copied={copied}
+          onCopy={copy}
+        />
+      ))}
 
       {digest.unassigned.length > 0 && (
         <section
@@ -180,20 +101,89 @@ export default function Digest() {
           <h2 style={{ fontSize: 'var(--size-lg)', color: 'var(--danger)', marginBottom: 'var(--space-3)' }}>
             Unassigned
           </h2>
-          <List
-            items={digest.unassigned.map((c) => ({
-              key: c.id,
-              main: c.receipt_number,
-              mono: true,
-              sub: c.vendor_name,
-              note: countdownLabel(c),
-              tone: TONE[urgency(c)],
-            }))}
-          />
+          <List items={digest.unassigned.map(consignmentItem)} />
         </section>
       )}
     </>
   )
+}
+
+function SpecialistSection({ section, copied, onCopy }) {
+  const body = specialistText(section)
+  const nothing = section.consignments.length === 0 && section.tasks.length === 0
+
+  return (
+    <section
+      style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)',
+        padding: 'var(--space-5)',
+        marginBottom: 'var(--space-4)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          gap: 'var(--space-4)',
+          flexWrap: 'wrap',
+          marginBottom: 'var(--space-4)',
+        }}
+      >
+        <div>
+          <h2 style={{ fontSize: 'var(--size-lg)' }}>{section.person.full_name}</h2>
+          <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
+            {section.person.email}
+          </p>
+        </div>
+
+        {!nothing && (
+          <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+            <ActionButton onClick={() => onCopy(section.person.id, body)}>
+              {copied === section.person.id ? 'Copied' : 'Copy'}
+            </ActionButton>
+            <MailButton email={section.person.email} body={body} />
+          </div>
+        )}
+      </div>
+
+      {nothing && (
+        <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
+          Nothing outstanding. No need to email.
+        </p>
+      )}
+
+      {section.tasks.length > 0 && (
+        <List heading="Tasks" items={section.tasks.map(taskItem)} />
+      )}
+
+      {section.consignments.length > 0 && (
+        <List heading="Consignments" items={section.consignments.map(consignmentItem)} />
+      )}
+    </section>
+  )
+}
+
+function taskItem(t) {
+  return {
+    key: t.id,
+    main: t.title,
+    note: taskDueLabel(t),
+    tone: TONE[taskUrgency(t)],
+  }
+}
+
+function consignmentItem(c) {
+  return {
+    key: c.id,
+    main: c.receipt_number,
+    mono: true,
+    sub: `${c.vendor_name} · ${c.box_count} ${plural(c.box_count, 'box')}`,
+    note: countdownLabel(c),
+    tone: TONE[urgency(c)],
+  }
 }
 
 function List({ heading, items }) {
@@ -222,7 +212,9 @@ function List({ heading, items }) {
                 {item.main}
               </span>
               {item.sub && (
-                <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}> · {item.sub}</span>
+                <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
+                  {' · '}{item.sub}
+                </span>
               )}
             </div>
             <Badge tone={item.tone}>{item.note}</Badge>
@@ -249,5 +241,26 @@ function ActionButton({ onClick, children }) {
     >
       {children}
     </button>
+  )
+}
+
+function MailButton({ email, body }) {
+  const style = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    height: 'var(--control-height)',
+    padding: '0 var(--space-4)',
+    borderRadius: 'var(--radius)',
+    background: 'var(--navy)',
+    color: 'var(--text-on-dark)',
+    textDecoration: 'none',
+    fontWeight: 500,
+    fontSize: 'var(--size-sm)',
+  }
+
+  return (
+    <a href={mailtoLink(email, SUBJECT, body)} style={style}>
+      Open in email
+    </a>
   )
 }
