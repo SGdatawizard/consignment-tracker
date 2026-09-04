@@ -6,6 +6,7 @@ import Login from './pages/Login'
 import Overview from './pages/Overview'
 import Auctions from './pages/Auctions'
 import MyWork from './pages/MyWork'
+import Digest from './pages/Digest'
 
 export default function App() {
   return (
@@ -35,6 +36,10 @@ function Gate() {
           <Route
             path="/my-work"
             element={<Guard allowed={CAN.ownWork(profile.role)}><MyWork /></Guard>}
+          />
+          <Route
+            path="/digest"
+            element={<Guard allowed={CAN.manage(profile.role)}><Digest /></Guard>}
           />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Route>
