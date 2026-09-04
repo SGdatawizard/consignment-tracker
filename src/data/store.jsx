@@ -1,9 +1,6 @@
-import { createContext, useContext, useState } from 'react'
-import { SEED_CONSIGNMENTS, SEED_ASSIGNMENT_HISTORY } from './seedConsignments'
-import { SEED_TASKS } from './seedTasks'
-import { USERS } from './users'
+import { createContext, useContext, useCallback, useEffect, useState } from 'react'
+import { supabase } from '../lib/supabase'
 import { useAuth } from './auth'
-import { deriveStatus, STATUS } from '../lib/consignments'
 
 const StoreContext = createContext(null)
 
@@ -11,138 +8,238 @@ export function StoreProvider({ children }) {
   const { profile } = useAuth()
   const currentUserId = profile.id
 
-  const [consignments, setConsignments] = useState(SEED_CONSIGNMENTS)
-  const [history, setHistory] = useState(SEED_ASSIGNMENT_HISTORY)
-  const [tasks, setTasks] = useState(SEED_TASKS)
+  const [consignments, setConsignments] = useState([])
+  const [history, setHistory] = useState([])
+  const [tasks, setTasks] = useState([])
+  const [people, setPeople] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [lastChange, setLastChange] = useState(null)
 
-  const currentUser = profile
+  const load = useCallback(async () => {
+    const [c, h, t, p] = await Promise.all([
+      supabase.from('consignments').select('*').is('deleted_at', null).order('arrival_date'),
+      supabase.from('assignment_history').select('*'),
+      supabase.from('tasks').select('*').is('deleted_at', null).order('created_at', { ascending: false }),
+      supabase.from('profiles').select('*').eq('active', true).order('full_name'),
+    ])
 
-  function toggleFlag(id, field, value) {
-    setConsignments((prev) =>
-      prev.map((c) => {
-        if (c.id !== id) return c
+    const failure = [c, h, t, p].find((r) => r.error)
+    if (failure) {
+      setError(failure.error.message)
+      setLoading(false)
+      return
+    }
 
-        const before = deriveStatus(c)
-        const next = { ...c, [field]: value, [`${field}_at`]: value ? new Date().toISOString() : null }
-        const after = deriveStatus(next)
+    setConsignments(c.data)
+    setHistory(h.data)
+    setTasks(t.data)
+    setPeople(p.data)
+    setError(null)
+    setLoading(false)
+  }, [])
 
-        if (before !== after) {
-          if (after === STATUS.AWAITING_VENDOR) next.awaiting_vendor_at = new Date().toISOString()
-          if (after === STATUS.IN_PROGRESS) next.awaiting_vendor_at = null
-          if (after === STATUS.COMPLETE) next.completed_at = new Date().toISOString()
-          else next.completed_at = null
+  useEffect(() => { load() }, [load])
 
-          setLastChange({
-            id: c.id,
-            receipt: c.receipt_number,
-            field,
-            previousValue: c[field],
-            movedTo: after,
-            snapshot: c,
-          })
-        }
+  const specialists = people.filter((p) => p.role === 'specialist')
 
-        return next
+  // -- consignments ------------------------------------------
+
+  async function toggleFlag(id, field, value) {
+    const before = consignments.find((c) => c.id === id)
+    if (!before) return
+
+    setConsignments((prev) => prev.map((c) => (c.id === id ? { ...c, [field]: value } : c)))
+
+    const { data, error: err } = await supabase
+      .from('consignments')
+      .update({ [field]: value })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (err) {
+      setConsignments((prev) => prev.map((c) => (c.id === id ? before : c)))
+      setError(err.message)
+      return
+    }
+
+    setConsignments((prev) => prev.map((c) => (c.id === id ? data : c)))
+
+    if (data.status !== before.status) {
+      setLastChange({
+        id,
+        receipt: data.receipt_number,
+        field,
+        movedTo: data.status,
+        snapshot: before,
       })
-    )
+    }
   }
 
-  function undoLastChange() {
+  async function undoLastChange() {
     if (!lastChange) return
-    setConsignments((prev) =>
-      prev.map((c) => (c.id === lastChange.id ? lastChange.snapshot : c))
-    )
+    const { field, snapshot, id } = lastChange
     setLastChange(null)
+
+    const { data, error: err } = await supabase
+      .from('consignments')
+      .update({ [field]: snapshot[field] })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (err) return setError(err.message)
+    setConsignments((prev) => prev.map((c) => (c.id === id ? data : c)))
   }
 
   function dismissLastChange() {
     setLastChange(null)
   }
 
-  function addConsignment(fields) {
-    const record = {
-      id: `c${Date.now()}`,
-      storage_location: null,
-      valued: false,
-      valued_at: null,
-      vendor_emailed: false,
-      vendor_emailed_at: null,
-      described: false,
-      sent_back_to_vendor: false,
-      awaiting_vendor_at: null,
-      completed_at: null,
-      ...fields,
+  async function addConsignment(fields) {
+    const { data, error: err } = await supabase
+      .from('consignments')
+      .insert({ ...fields, intake_specialist_id: currentUserId })
+      .select()
+      .single()
+
+    if (err) {
+      setError(err.message)
+      return null
     }
-    setConsignments((prev) => [record, ...prev])
-    return record
+
+    setConsignments((prev) => [...prev, data])
+    return data
   }
 
-  function reassign(consignmentId, toUserId) {
-    const target = consignments.find((c) => c.id === consignmentId)
-    if (!target || target.assigned_to === toUserId) return
+  async function reassign(consignmentId, toUserId) {
+    const before = consignments.find((c) => c.id === consignmentId)
+    if (!before || before.assigned_to === toUserId) return
 
-    setHistory((prev) => [
-      ...prev,
-      {
-        id: `h${Date.now()}`,
-        consignment_id: consignmentId,
-        from_user: target.assigned_to,
-        to_user: toUserId,
-        changed_by: currentUserId,
-        changed_at: new Date().toISOString(),
-      },
-    ])
     setConsignments((prev) =>
       prev.map((c) => (c.id === consignmentId ? { ...c, assigned_to: toUserId } : c))
     )
-  }
 
-  function setStorageLocation(consignmentId, location) {
-    setConsignments((prev) =>
-      prev.map((c) => (c.id === consignmentId ? { ...c, storage_location: location || null } : c))
-    )
-  }
+    const { data, error: err } = await supabase
+      .from('consignments')
+      .update({ assigned_to: toUserId })
+      .eq('id', consignmentId)
+      .select()
+      .single()
 
-  function addTask({ title, detail, assigned_to, due_date }) {
-    const record = {
-      id: `t${Date.now()}`,
-      title: title.trim(),
-      detail: detail.trim(),
-      assigned_to,
-      created_by: currentUserId,
-      created_at: new Date().toISOString(),
-      due_date: due_date || null,
-      completed: false,
-      completed_at: null,
+    if (err) {
+      setConsignments((prev) => prev.map((c) => (c.id === consignmentId ? before : c)))
+      setError(err.message)
+      return
     }
-    setTasks((prev) => [record, ...prev])
-    return record
+
+    setConsignments((prev) => prev.map((c) => (c.id === consignmentId ? data : c)))
+
+    const { data: rows } = await supabase
+      .from('assignment_history')
+      .select('*')
+      .eq('consignment_id', consignmentId)
+    if (rows) {
+      setHistory((prev) => [...prev.filter((h) => h.consignment_id !== consignmentId), ...rows])
+    }
   }
 
-  function toggleTask(id, completed) {
-    setTasks((prev) =>
-      prev.map((t) =>
-        t.id === id
-          ? { ...t, completed, completed_at: completed ? new Date().toISOString() : null }
-          : t
-      )
+  async function setStorageLocation(consignmentId, location) {
+    const value = location || null
+    const before = consignments.find((c) => c.id === consignmentId)
+    if (!before || before.storage_location === value) return
+
+    setConsignments((prev) =>
+      prev.map((c) => (c.id === consignmentId ? { ...c, storage_location: value } : c))
     )
+
+    const { error: err } = await supabase
+      .from('consignments')
+      .update({ storage_location: value })
+      .eq('id', consignmentId)
+
+    if (err) {
+      setConsignments((prev) => prev.map((c) => (c.id === consignmentId ? before : c)))
+      setError(err.message)
+    }
   }
 
-  function reassignTask(taskId, toUserId) {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, assigned_to: toUserId } : t))
-    )
+  // -- tasks -------------------------------------------------
+
+  async function addTask({ title, detail, assigned_to, due_date }) {
+    const { data, error: err } = await supabase
+      .from('tasks')
+      .insert({
+        title: title.trim(),
+        detail: detail.trim(),
+        assigned_to,
+        due_date: due_date || null,
+        created_by: currentUserId,
+      })
+      .select()
+      .single()
+
+    if (err) {
+      setError(err.message)
+      return null
+    }
+
+    setTasks((prev) => [data, ...prev])
+    return data
+  }
+
+  async function toggleTask(id, completed) {
+    const before = tasks.find((t) => t.id === id)
+    if (!before) return
+
+    setTasks((prev) => prev.map((t) => (t.id === id ? { ...t, completed } : t)))
+
+    const { data, error: err } = await supabase
+      .from('tasks')
+      .update({ completed })
+      .eq('id', id)
+      .select()
+      .single()
+
+    if (err) {
+      setTasks((prev) => prev.map((t) => (t.id === id ? before : t)))
+      setError(err.message)
+      return
+    }
+
+    setTasks((prev) => prev.map((t) => (t.id === id ? data : t)))
+  }
+
+  async function reassignTask(taskId, toUserId) {
+    const before = tasks.find((t) => t.id === taskId)
+    if (!before || before.assigned_to === toUserId) return
+
+    setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, assigned_to: toUserId } : t)))
+
+    const { error: err } = await supabase
+      .from('tasks')
+      .update({ assigned_to: toUserId })
+      .eq('id', taskId)
+
+    if (err) {
+      setTasks((prev) => prev.map((t) => (t.id === taskId ? before : t)))
+      setError(err.message)
+    }
   }
 
   const value = {
     consignments,
     history,
     tasks,
-    users: USERS,
-    currentUser,
+    people,
+    specialists,
+    currentUser: profile,
     currentUserId,
+    loading,
+    error,
+    dismissError: () => setError(null),
+    reload: load,
     toggleFlag,
     addConsignment,
     reassign,
