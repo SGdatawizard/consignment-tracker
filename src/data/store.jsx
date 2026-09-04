@@ -3,6 +3,7 @@ import { SEED_CONSIGNMENTS, SEED_ASSIGNMENT_HISTORY } from './seedConsignments'
 import { USERS } from './users'
 import { deriveStatus, STATUS } from '../lib/consignments'
 import { SEED_TASKS } from './seedTasks'
+import { useAuth } from './auth'
 
 const StoreContext = createContext(null)
 
@@ -13,7 +14,8 @@ export function StoreProvider({ children }) {
   const [currentUserId, setCurrentUserId] = useState('u3')
   const [lastChange, setLastChange] = useState(null)
 
-  const currentUser = USERS.find((u) => u.id === currentUserId)
+  const { profile } = useAuth()
+  const currentUserId = profile.id
 
   function toggleFlag(id, field, value) {
     setConsignments((prev) =>
