@@ -30,7 +30,7 @@ export default function NewTaskForm() {
     if (!record) return
 
     const who = specialists.find((s) => s.id === record.assigned_to)?.full_name
-    setConfirmed(`${record.title} assigned to ${who}. They've been emailed.`)
+    setConfirmed(`${record.title} assigned to ${who}.`)
     setForm({ ...BLANK, assigned_to: form.assigned_to })
   }
 
