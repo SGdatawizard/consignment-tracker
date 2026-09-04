@@ -8,6 +8,7 @@ export default function Sidebar() {
     { to: '/overview', label: 'Overview', show: true },
     { to: '/auctions', label: 'Book in', show: CAN.bookIn(profile.role) },
     { to: '/my-work', label: 'My work', show: CAN.ownWork(profile.role) },
+    { to: '/digest', label: 'Weekly digest', show: CAN.manage(profile.role) },
   ].filter((i) => i.show)
 
   return (
