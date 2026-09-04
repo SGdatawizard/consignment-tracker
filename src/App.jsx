@@ -3,6 +3,7 @@ import { StoreProvider } from './data/store'
 import Layout from './components/Layout'
 import MyWork from './pages/MyWork'
 import Overview from './pages/Overview'
+import Auctions from './pages/Auctions'
 
 export default function App() {
   return (
@@ -11,7 +12,7 @@ export default function App() {
         <Route element={<Layout />}>
           <Route path="/" element={<Navigate to="/overview" replace />} />
           <Route path="/overview" element={<Overview />} />
-          <Route path="/auctions" element={<Placeholder title="Book in" />} />
+          <Route path="/auctions" element={<Auctions />} />
           <Route path="/my-work" element={<MyWork />} />
           <Route path="*" element={<Placeholder title="Page not found" />} />
         </Route>
