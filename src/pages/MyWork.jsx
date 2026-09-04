@@ -1,15 +1,27 @@
 import { useMemo } from 'react'
 import { useStore } from '../data/store'
 import ConsignmentCard from '../components/ConsignmentCard'
+import TaskCard from '../components/TaskCard'
 import { deriveStatus, sortByUrgency, STATUS, formatDate, plural } from '../lib/consignments'
+import { sortTasks } from '../lib/tasks'
 
 export default function MyWork() {
-  const { consignments, currentUser, toggleFlag, setStorageLocation } = useStore()
+  const { consignments, tasks, currentUser, toggleFlag, toggleTask, setStorageLocation } = useStore()
 
   const mine = useMemo(
     () => consignments.filter((c) => c.assigned_to === currentUser.id),
     [consignments, currentUser.id]
   )
+
+  const myTasks = useMemo(
+    () => tasks.filter((t) => t.assigned_to === currentUser.id),
+    [tasks, currentUser.id]
+  )
+
+  const openTasks = sortTasks(myTasks.filter((t) => !t.completed))
+  const doneTasks = myTasks
+    .filter((t) => t.completed)
+    .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at))
 
   const inProgress = sortByUrgency(mine.filter((c) => deriveStatus(c) === STATUS.IN_PROGRESS))
   const awaiting = mine.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR)
@@ -17,27 +29,60 @@ export default function MyWork() {
     .filter((c) => deriveStatus(c) === STATUS.COMPLETE)
     .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at))
 
+  const nothingAtAll = mine.length === 0 && myTasks.length === 0
+
   return (
     <>
       <header style={{ marginBottom: 'var(--space-6)' }}>
         <h1>Your consignments</h1>
         <p style={{ color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
           {currentUser.full_name} · {inProgress.length} in progress, {awaiting.length} awaiting vendor
+          {openTasks.length > 0 && `, ${openTasks.length} ${plural(openTasks.length, 'task')}`}
         </p>
       </header>
 
-      {mine.length === 0 && (
+      {nothingAtAll && (
         <Empty>Nothing is assigned to you at the moment.</Empty>
       )}
 
-      <Section title="In progress" count={inProgress.length}>
-        {inProgress.map((c) => (
-          <ConsignmentCard key={c.id} consignment={c} onToggle={toggleFlag} />
-        ))}
-        {mine.length > 0 && inProgress.length === 0 && (
-          <Empty>Nothing waiting on you right now.</Empty>
-        )}
-      </Section>
+      {openTasks.length > 0 && (
+        <Section title="Tasks" count={openTasks.length}>
+          {openTasks.map((t) => (
+            <TaskCard key={t.id} task={t} onToggle={toggleTask} />
+          ))}
+        </Section>
+      )}
+
+      {doneTasks.length > 0 && (
+        <details style={{ marginBottom: 'var(--space-6)' }}>
+          <summary
+            style={{
+              cursor: 'pointer',
+              color: 'var(--text-muted)',
+              fontSize: 'var(--size-sm)',
+              padding: 'var(--space-2) 0',
+            }}
+          >
+            Completed tasks ({doneTasks.length})
+          </summary>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', marginTop: 'var(--space-3)' }}>
+            {doneTasks.map((t) => (
+              <TaskCard key={t.id} task={t} onToggle={toggleTask} />
+            ))}
+          </div>
+        </details>
+      )}
+
+      {mine.length > 0 && (
+        <Section title="In progress" count={inProgress.length}>
+          {inProgress.map((c) => (
+            <ConsignmentCard key={c.id} consignment={c} onToggle={toggleFlag} />
+          ))}
+          {inProgress.length === 0 && (
+            <Empty>No consignments waiting on you right now.</Empty>
+          )}
+        </Section>
+      )}
 
       {awaiting.length > 0 && (
         <Section title="Awaiting vendor" count={awaiting.length}>
