@@ -1,6 +1,5 @@
 import { useEffect } from 'react'
 import { useStore } from '../data/store'
-import { STATUS_LABEL } from '../lib/consignments'
 
 export default function UndoBar() {
   const { lastChange, undoLastChange, dismissLastChange } = useStore()
@@ -12,6 +11,8 @@ export default function UndoBar() {
   }, [lastChange, dismissLastChange])
 
   if (!lastChange) return null
+
+  const destination = lastChange.movedTo === 'awaiting_vendor' ? 'awaiting vendor' : 'complete'
 
   return (
     <div
@@ -36,7 +37,7 @@ export default function UndoBar() {
       <span style={{ fontSize: 'var(--size-sm)' }}>
         <strong className="receipt">{lastChange.receipt}</strong>
         {' moved to '}
-        {STATUS_LABEL[lastChange.movedTo].toLowerCase()}
+        {destination}
       </span>
       <button
         onClick={undoLastChange}
