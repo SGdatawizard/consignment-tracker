@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { useStore } from '../data/store'
-import { SPECIALISTS } from '../data/users'
 import Field, { inputStyle } from '../components/Field'
 import { formatDateLong, plural } from '../lib/consignments'
 
@@ -19,10 +18,11 @@ const BLANK = {
 }
 
 export default function Auctions() {
-  const { consignments, currentUser, addConsignment } = useStore()
+  const { consignments, specialists, addConsignment } = useStore()
   const [form, setForm] = useState(BLANK)
   const [errors, setErrors] = useState({})
   const [confirmed, setConfirmed] = useState(null)
+  const [busy, setBusy] = useState(false)
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
@@ -52,21 +52,25 @@ export default function Auctions() {
     return Object.keys(next).length === 0
   }
 
-  function submit() {
+  async function submit() {
     if (!validate()) return
-    const record = addConsignment({
+    setBusy(true)
+
+    const record = await addConsignment({
       receipt_number: form.receipt_number.trim().toUpperCase(),
       vendor_name: form.vendor_name.trim(),
       box_count: Number(form.box_count),
       arrival_date: form.arrival_date,
-      intake_specialist_id: currentUser.id,
       assigned_to: form.assigned_to,
     })
-    setConfirmed(record)
+
+    setBusy(false)
+    if (!record) return
+
+    const who = specialists.find((s) => s.id === record.assigned_to)?.full_name
+    setConfirmed({ record, who })
     setForm({ ...BLANK, assigned_to: form.assigned_to })
   }
-
-  const assignedName = SPECIALISTS.find((s) => s.id === confirmed?.assigned_to)?.full_name
 
   return (
     <>
@@ -89,9 +93,9 @@ export default function Auctions() {
             color: 'var(--success)',
           }}
         >
-          <strong className="receipt">{confirmed.receipt_number}</strong>
+          <strong className="receipt">{confirmed.record.receipt_number}</strong>
           {' booked in and assigned to '}
-          {assignedName}. Due back {formatDateLong(new Date(Date.now() + 30 * 86400000))}.
+          {confirmed.who}. Due back {formatDateLong(new Date(Date.now() + 30 * 86400000))}.
         </div>
       )}
 
@@ -188,7 +192,7 @@ export default function Auctions() {
             style={inputStyle}
           >
             <option value="">Choose a specialist</option>
-            {SPECIALISTS.map((s) => (
+            {specialists.map((s) => (
               <option key={s.id} value={s.id}>{s.full_name}</option>
             ))}
           </select>
@@ -196,6 +200,7 @@ export default function Auctions() {
 
         <button
           onClick={submit}
+          disabled={busy}
           style={{
             height: 'var(--control-height-lg)',
             padding: '0 var(--space-6)',
@@ -205,9 +210,10 @@ export default function Auctions() {
             fontWeight: 700,
             fontSize: 'var(--size-base)',
             alignSelf: 'flex-start',
+            opacity: busy ? 0.7 : 1,
           }}
         >
-          Book in consignment
+          {busy ? 'Booking in…' : 'Book in consignment'}
         </button>
       </div>
 
@@ -217,7 +223,10 @@ export default function Auctions() {
 }
 
 function RecentlyBookedIn({ consignments }) {
-  const recent = consignments.slice(0, 5)
+  const recent = [...consignments]
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+    .slice(0, 5)
+
   if (recent.length === 0) return null
 
   return (
