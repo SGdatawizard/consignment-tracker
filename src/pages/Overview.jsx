@@ -1,0 +1,264 @@
+import { useMemo, useState } from 'react'
+import { useStore } from '../data/store'
+import { SPECIALISTS } from '../data/users'
+import StatTile from '../components/StatTile'
+import Badge from '../components/Badge'
+import {
+  deriveStatus, STATUS, STATUS_LABEL, urgency, countdownLabel,
+  daysInDept, daysWithCurrentSpecialist, wasReassigned,
+  nextAction, sortByUrgency, formatDate, plural,
+} from '../lib/consignments'
+
+export default function Overview() {
+  const { consignments, history, reassign } = useStore()
+  const [filter, setFilter] = useState('open')
+  const [groupBySpecialist, setGroupBySpecialist] = useState(true)
+
+  const open = consignments.filter((c) => deriveStatus(c) !== STATUS.COMPLETE)
+
+  const stats = useMemo(() => ({
+    open: open.length,
+    inProgress: open.filter((c) => deriveStatus(c) === STATUS.IN_PROGRESS).length,
+    awaiting: open.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR).length,
+    overdue: open.filter((c) => urgency(c) === 'overdue').length,
+    soon: open.filter((c) => urgency(c) === 'soon').length,
+    noLocation: consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE && !c.storage_location).length,
+  }), [consignments, open])
+
+  const visible = useMemo(() => {
+    let list = consignments
+    if (filter === 'open') list = open
+    if (filter === 'overdue') list = open.filter((c) => urgency(c) === 'overdue')
+    if (filter === 'awaiting') list = open.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR)
+    if (filter === 'complete') list = consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE)
+    if (filter === 'no_location') list = consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE && !c.storage_location)
+    return sortByUrgency(list)
+  }, [consignments, open, filter])
+
+  const groups = useMemo(() => {
+    if (!groupBySpecialist) return [{ id: 'all', name: null, items: visible }]
+    return SPECIALISTS.map((s) => ({
+      id: s.id,
+      name: s.full_name,
+      items: visible.filter((c) => c.assigned_to === s.id),
+    })).filter((g) => g.items.length > 0)
+  }, [visible, groupBySpecialist])
+
+  return (
+    <>
+      <header style={{ marginBottom: 'var(--space-5)' }}>
+        <h1>Overview</h1>
+        <p style={{ color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
+          {stats.open} open {plural(stats.open, 'consignment')} across {SPECIALISTS.length} specialists
+        </p>
+      </header>
+
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+          gap: 'var(--space-3)',
+          marginBottom: 'var(--space-5)',
+        }}
+      >
+        <StatTile label="Open" value={stats.open} />
+        <StatTile label="In progress" value={stats.inProgress} />
+        <StatTile label="Awaiting vendor" value={stats.awaiting} />
+        <StatTile label="Due within 7 days" value={stats.soon} tone="gold" />
+        <StatTile label="Overdue" value={stats.overdue} tone="danger" />
+      </div>
+
+      <div
+        style={{
+          display: 'flex',
+          gap: 'var(--space-3)',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          marginBottom: 'var(--space-5)',
+        }}
+      >
+        <Filters value={filter} onChange={setFilter} counts={stats} />
+        <label
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+            marginLeft: 'auto',
+            fontSize: 'var(--size-sm)',
+            color: 'var(--text-muted)',
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={groupBySpecialist}
+            onChange={(e) => setGroupBySpecialist(e.target.checked)}
+            style={{ width: '18px', height: '18px' }}
+          />
+          Group by specialist
+        </label>
+      </div>
+
+      {visible.length === 0 && (
+        <p
+          style={{
+            background: 'var(--surface-sunken)',
+            borderRadius: 'var(--radius)',
+            padding: 'var(--space-5)',
+            color: 'var(--text-muted)',
+          }}
+        >
+          Nothing matches that filter.
+        </p>
+      )}
+
+      {groups.map((group) => (
+        <section key={group.id} style={{ marginBottom: 'var(--space-6)' }}>
+          {group.name && (
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
+              <h2 style={{ fontSize: 'var(--size-lg)' }}>{group.name}</h2>
+              <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
+                {group.items.length}
+              </span>
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            {group.items.map((c) => (
+              <Row key={c.id} consignment={c} history={history} onReassign={reassign} />
+            ))}
+          </div>
+        </section>
+      ))}
+
+      {stats.noLocation > 0 && filter !== 'no_location' && (
+        <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
+          {stats.noLocation} completed {plural(stats.noLocation, 'consignment')} with no storage location recorded.{' '}
+          <button
+            onClick={() => setFilter('no_location')}
+            style={{ color: 'var(--navy)', textDecoration: 'underline', fontWeight: 500 }}
+          >
+            Show them
+          </button>
+        </p>
+      )}
+    </>
+  )
+}
+
+const FILTERS = [
+  { id: 'open', label: 'Open' },
+  { id: 'overdue', label: 'Overdue' },
+  { id: 'awaiting', label: 'Awaiting vendor' },
+  { id: 'complete', label: 'Complete' },
+]
+
+function Filters({ value, onChange }) {
+  return (
+    <div role="group" aria-label="Filter consignments" style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+      {FILTERS.map((f) => {
+        const active = value === f.id
+        return (
+          <button
+            key={f.id}
+            onClick={() => onChange(f.id)}
+            aria-pressed={active}
+            style={{
+              height: '38px',
+              padding: '0 var(--space-4)',
+              borderRadius: 'var(--radius)',
+              border: `1px solid ${active ? 'var(--navy)' : 'var(--border-strong)'}`,
+              background: active ? 'var(--navy)' : 'var(--surface)',
+              color: active ? 'var(--text-on-dark)' : 'var(--text)',
+              fontWeight: 500,
+              fontSize: 'var(--size-sm)',
+            }}
+          >
+            {f.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function Row({ consignment: c, history, onReassign }) {
+  const status = deriveStatus(c)
+  const level = urgency(c)
+  const withCurrent = daysWithCurrentSpecialist(c, history)
+  const inDept = daysInDept(c)
+  const moved = wasReassigned(c, history)
+  const action = nextAction(c)
+
+  const accent = {
+    overdue: 'var(--danger)',
+    soon: 'var(--gold)',
+    frozen: 'var(--navy-soft)',
+    ok: 'var(--border)',
+  }[level]
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr) auto',
+        gap: 'var(--space-4)',
+        alignItems: 'center',
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderLeft: `4px solid ${accent}`,
+        borderRadius: 0,
+        padding: 'var(--space-3) var(--space-4)',
+      }}
+    >
+      <div>
+        <p className="receipt">{c.receipt_number}</p>
+        <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+          {c.vendor_name} · {c.box_count} {plural(c.box_count, 'box')} · in {formatDate(c.arrival_date)}
+        </p>
+      </div>
+
+      <div>
+        <p style={{ fontSize: 'var(--size-sm)' }}>
+          {status === STATUS.COMPLETE ? 'Complete' : action}
+        </p>
+        <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+          {status === STATUS.COMPLETE ? STATUS_LABEL[status] : countdownLabel(c)}
+        </p>
+      </div>
+
+      <div>
+        <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+          {inDept} {plural(inDept, 'day')} in dept
+        </p>
+        {moved && (
+          <p style={{ fontSize: 'var(--size-xs)', color: 'var(--text-muted)' }}>
+            {withCurrent} {plural(withCurrent, 'day')} with current
+          </p>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+        {status === STATUS.COMPLETE && !c.storage_location && <Badge tone="gold">No location</Badge>}
+        <label htmlFor={`assign-${c.id}`} className="sr-only">
+          Assign {c.receipt_number} to
+        </label>
+        <select
+          id={`assign-${c.id}`}
+          value={c.assigned_to}
+          onChange={(e) => onReassign(c.id, e.target.value)}
+          style={{
+            height: '38px',
+            padding: '0 var(--space-2)',
+            borderRadius: 'var(--radius)',
+            border: '1px solid var(--border-strong)',
+            background: 'var(--surface)',
+            maxWidth: '150px',
+          }}
+        >
+          {SPECIALISTS.map((s) => (
+            <option key={s.id} value={s.id}>{s.full_name}</option>
+          ))}
+        </select>
+      </div>
+    </div>
+  )
+}
