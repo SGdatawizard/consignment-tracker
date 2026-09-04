@@ -1,31 +1,35 @@
 import { useState } from 'react'
 import { useStore } from '../data/store'
-import { SPECIALISTS } from '../data/users'
 import Field, { inputStyle } from './Field'
 
 const BLANK = { title: '', detail: '', assigned_to: '', due_date: '' }
 
 export default function NewTaskForm() {
-  const { addTask } = useStore()
+  const { addTask, specialists } = useStore()
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState(BLANK)
   const [errors, setErrors] = useState({})
   const [confirmed, setConfirmed] = useState(null)
+  const [busy, setBusy] = useState(false)
 
   function set(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
     setErrors((e) => ({ ...e, [field]: undefined }))
   }
 
-  function submit() {
+  async function submit() {
     const next = {}
     if (!form.title.trim()) next.title = 'Give the task a name.'
     if (!form.assigned_to) next.assigned_to = 'Choose a specialist.'
     setErrors(next)
     if (Object.keys(next).length) return
 
-    const record = addTask(form)
-    const who = SPECIALISTS.find((s) => s.id === record.assigned_to)?.full_name
+    setBusy(true)
+    const record = await addTask(form)
+    setBusy(false)
+    if (!record) return
+
+    const who = specialists.find((s) => s.id === record.assigned_to)?.full_name
     setConfirmed(`${record.title} assigned to ${who}. They've been emailed.`)
     setForm({ ...BLANK, assigned_to: form.assigned_to })
   }
@@ -111,7 +115,7 @@ export default function NewTaskForm() {
             style={inputStyle}
           >
             <option value="">Choose a specialist</option>
-            {SPECIALISTS.map((s) => (
+            {specialists.map((s) => (
               <option key={s.id} value={s.id}>{s.full_name}</option>
             ))}
           </select>
@@ -132,6 +136,7 @@ export default function NewTaskForm() {
       <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
         <button
           onClick={submit}
+          disabled={busy}
           style={{
             height: 'var(--control-height)',
             padding: '0 var(--space-5)',
@@ -139,9 +144,10 @@ export default function NewTaskForm() {
             background: 'var(--navy)',
             color: 'var(--text-on-dark)',
             fontWeight: 700,
+            opacity: busy ? 0.7 : 1,
           }}
         >
-          Create task
+          {busy ? 'Creating…' : 'Create task'}
         </button>
         <button
           onClick={() => { setOpen(false); setForm(BLANK); setErrors({}) }}
