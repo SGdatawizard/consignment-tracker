@@ -17,12 +17,12 @@ const TONE = {
 const SUBJECT = 'Your outstanding work this week'
 
 export default function Digest() {
-  const { consignments, tasks, specialists } = useStore()
+  const { consignments, assignments, tasks, specialists, people } = useStore()
   const [copied, setCopied] = useState(null)
 
   const digest = useMemo(
-    () => buildDigest({ consignments, tasks, specialists }),
-    [consignments, tasks, specialists]
+    () => buildDigest({ consignments, assignments, tasks, specialists, people }),
+    [consignments, assignments, tasks, specialists, people]
   )
 
   async function copy(key, text) {
@@ -101,7 +101,7 @@ export default function Digest() {
           <h2 style={{ fontSize: 'var(--size-lg)', color: 'var(--danger)', marginBottom: 'var(--space-3)' }}>
             Unassigned
           </h2>
-          <List items={digest.unassigned.map(consignmentItem)} />
+          <List items={digest.unassigned.map(plainConsignmentItem)} />
         </section>
       )}
     </>
@@ -110,7 +110,7 @@ export default function Digest() {
 
 function SpecialistSection({ section, copied, onCopy }) {
   const body = specialistText(section)
-  const nothing = section.consignments.length === 0 && section.tasks.length === 0
+  const nothing = section.items.length === 0 && section.tasks.length === 0
 
   return (
     <section
@@ -159,8 +159,8 @@ function SpecialistSection({ section, copied, onCopy }) {
         <List heading="Tasks" items={section.tasks.map(taskItem)} />
       )}
 
-      {section.consignments.length > 0 && (
-        <List heading="Consignments" items={section.consignments.map(consignmentItem)} />
+      {section.items.length > 0 && (
+        <List heading="Consignments" items={section.items.map(consignmentItem)} />
       )}
     </section>
   )
@@ -175,12 +175,28 @@ function taskItem(t) {
   }
 }
 
-function consignmentItem(c) {
+function consignmentItem(item) {
+  const c = item.consignment
+  const bits = [`${c.vendor_name} · ${c.box_count} ${plural(c.box_count, 'box')}`]
+  if (item.part?.remit) bits.push(item.part.remit)
+
   return {
     key: c.id,
     main: c.receipt_number,
     mono: true,
-    sub: `${c.vendor_name} · ${c.box_count} ${plural(c.box_count, 'box')}`,
+    sub: bits.join(' · '),
+    shared: item.shared,
+    note: countdownLabel(c),
+    tone: TONE[urgency(c)],
+  }
+}
+
+function plainConsignmentItem(c) {
+  return {
+    key: c.id,
+    main: c.receipt_number,
+    mono: true,
+    sub: c.vendor_name,
     note: countdownLabel(c),
     tone: TONE[urgency(c)],
   }
@@ -211,6 +227,11 @@ function List({ heading, items }) {
               <span className={item.mono ? 'receipt' : undefined} style={{ fontSize: 'var(--size-sm)' }}>
                 {item.main}
               </span>
+              {item.shared && (
+                <span style={{ marginLeft: 'var(--space-2)' }}>
+                  <Badge tone="navy">Split</Badge>
+                </span>
+              )}
               {item.sub && (
                 <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
                   {' · '}{item.sub}
