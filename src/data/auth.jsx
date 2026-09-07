@@ -65,8 +65,11 @@ export function useAuth() {
   return ctx
 }
 
+// Roles that can be assigned consignments and tasks
+export const ASSIGNABLE_ROLES = ['specialist', 'head_of_dept']
+
 export const CAN = {
   bookIn: (role) => ['auctions', 'head_of_dept', 'admin'].includes(role),
   manage: (role) => ['head_of_dept', 'admin'].includes(role),
-  ownWork: (role) => ['specialist', 'admin'].includes(role),
+  ownWork: (role) => ASSIGNABLE_ROLES.includes(role) || role === 'admin',
 }
