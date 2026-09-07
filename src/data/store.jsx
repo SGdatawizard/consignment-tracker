@@ -44,7 +44,6 @@ export function StoreProvider({ children }) {
 
   useEffect(() => { load() }, [load])
 
-  // Everyone who can hold a consignment or a task
   const specialists = people.filter((p) => ASSIGNABLE_ROLES.includes(p.role))
 
   async function refreshConsignment(id) {
@@ -172,6 +171,7 @@ export function StoreProvider({ children }) {
 
   // -- consignments ------------------------------------------
 
+  // Returns { record, assigned } so the caller can tell the two apart
   async function addConsignment({ specialist_id, ...fields }) {
     const { data, error: err } = await supabase
       .from('consignments')
@@ -181,20 +181,22 @@ export function StoreProvider({ children }) {
 
     if (err) {
       setError(err.message)
-      return null
+      return { record: null, assigned: false }
     }
+
+    setConsignments((prev) => [...prev, data])
 
     const { error: assignErr } = await supabase
       .from('consignment_assignments')
       .insert({ consignment_id: data.id, specialist_id, created_by: currentUserId })
 
+    await refreshConsignment(data.id)
+
     if (assignErr) {
-      setError(`Booked in, but assigning failed: ${assignErr.message}`)
+      return { record: data, assigned: false, assignError: assignErr.message }
     }
 
-    setConsignments((prev) => [...prev, data])
-    await refreshConsignment(data.id)
-    return data
+    return { record: data, assigned: true }
   }
 
   async function setStorageLocation(consignmentId, location) {
