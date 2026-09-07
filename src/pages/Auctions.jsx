@@ -21,7 +21,7 @@ export default function Auctions() {
   const { consignments, specialists, addConsignment } = useStore()
   const [form, setForm] = useState(BLANK)
   const [errors, setErrors] = useState({})
-  const [confirmed, setConfirmed] = useState(null)
+  const [result, setResult] = useState(null)
   const [busy, setBusy] = useState(false)
 
   function set(field, value) {
@@ -55,8 +55,9 @@ export default function Auctions() {
   async function submit() {
     if (!validate()) return
     setBusy(true)
+    setResult(null)
 
-    const record = await addConsignment({
+    const outcome = await addConsignment({
       receipt_number: form.receipt_number.trim().toUpperCase(),
       vendor_name: form.vendor_name.trim(),
       box_count: Number(form.box_count),
@@ -65,10 +66,10 @@ export default function Auctions() {
     })
 
     setBusy(false)
-    if (!record) return
+    if (!outcome.record) return
 
     const who = specialists.find((s) => s.id === form.specialist_id)?.full_name
-    setConfirmed({ record, who })
+    setResult({ record: outcome.record, who, assigned: outcome.assigned })
     setForm({ ...BLANK, specialist_id: form.specialist_id })
   }
 
@@ -81,7 +82,7 @@ export default function Auctions() {
         </p>
       </header>
 
-      {confirmed && (
+      {result && result.assigned && (
         <div
           role="status"
           style={{
@@ -93,9 +94,30 @@ export default function Auctions() {
             color: 'var(--success)',
           }}
         >
-          <strong className="receipt">{confirmed.record.receipt_number}</strong>
+          <strong className="receipt">{result.record.receipt_number}</strong>
           {' booked in and assigned to '}
-          {confirmed.who}. Due back {formatDateLong(new Date(Date.now() + 30 * 86400000))}.
+          {result.who}. Due back {formatDateLong(new Date(Date.now() + 30 * 86400000))}.
+        </div>
+      )}
+
+      {result && !result.assigned && (
+        <div
+          role="alert"
+          style={{
+            background: 'var(--danger-tint)',
+            border: '1px solid var(--danger)',
+            borderRadius: 'var(--radius)',
+            padding: 'var(--space-4)',
+            marginBottom: 'var(--space-5)',
+            color: 'var(--danger)',
+          }}
+        >
+          <p style={{ fontWeight: 700, marginBottom: 'var(--space-2)' }}>
+            <span className="receipt">{result.record.receipt_number}</span> was booked in but NOT assigned.
+          </p>
+          <p style={{ fontSize: 'var(--size-sm)' }}>
+            It is showing as unassigned on the overview. Ask the head of department to assign it to {result.who}.
+          </p>
         </div>
       )}
 
