@@ -1,24 +1,26 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../data/store'
+import { useAuth, CAN } from '../data/auth'
 import StatTile from '../components/StatTile'
 import Badge from '../components/Badge'
 import TaskCard from '../components/TaskCard'
 import NewTaskForm from '../components/NewTaskForm'
-import { useAuth, CAN } from '../data/auth'
+import SplitPanel from '../components/SplitPanel'
 import {
   deriveStatus, STATUS, STATUS_LABEL, urgency, countdownLabel,
-  daysInDept, daysWithCurrentSpecialist, wasReassigned,
-  nextAction, sortByUrgency, formatDate, plural,
+  daysInDept, wasReassigned, sortByUrgency, formatDate, plural,
 } from '../lib/consignments'
+import { partsFor, nextActionShared, valuationProgress } from '../lib/assignments'
 import { sortTasks, taskUrgency } from '../lib/tasks'
 
 export default function Overview() {
-  const { consignments, tasks, history, specialists, reassign, reassignTask } = useStore()
+  const { consignments, assignments, tasks, history, people, specialists, reassignTask } = useStore()
   const { profile } = useAuth()
   const canManage = CAN.manage(profile.role)
 
   const [filter, setFilter] = useState('open')
   const [groupBySpecialist, setGroupBySpecialist] = useState(true)
+  const [expanded, setExpanded] = useState(null)
 
   const open = consignments.filter((c) => deriveStatus(c) !== STATUS.COMPLETE)
   const openTasks = tasks.filter((t) => !t.completed)
@@ -29,35 +31,40 @@ export default function Overview() {
     awaiting: open.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR).length,
     overdue: open.filter((c) => urgency(c) === 'overdue').length,
     soon: open.filter((c) => urgency(c) === 'soon').length,
+    shared: open.filter((c) => partsFor(c.id, assignments).length > 1).length,
     tasks: openTasks.length,
     tasksOverdue: openTasks.filter((t) => taskUrgency(t) === 'overdue').length,
     noLocation: consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE && !c.storage_location).length,
-  }), [consignments, open, openTasks])
+  }), [consignments, open, openTasks, assignments])
 
   const visible = useMemo(() => {
     let list = consignments
     if (filter === 'open') list = open
     if (filter === 'overdue') list = open.filter((c) => urgency(c) === 'overdue')
     if (filter === 'awaiting') list = open.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR)
+    if (filter === 'shared') list = open.filter((c) => partsFor(c.id, assignments).length > 1)
     if (filter === 'complete') list = consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE)
     if (filter === 'no_location') list = consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE && !c.storage_location)
     if (filter === 'tasks') list = []
     return sortByUrgency(list)
-  }, [consignments, open, filter])
+  }, [consignments, open, filter, assignments])
 
   const groups = useMemo(() => {
     if (!groupBySpecialist) return [{ id: 'all', name: null, items: visible }]
-    const assigned = specialists.map((s) => ({
+
+    const byPerson = specialists.map((s) => ({
       id: s.id,
       name: s.full_name,
-      items: visible.filter((c) => c.assigned_to === s.id),
+      items: visible.filter((c) =>
+        assignments.some((a) => a.consignment_id === c.id && a.specialist_id === s.id)
+      ),
     }))
-    const unassigned = visible.filter((c) => !specialists.some((s) => s.id === c.assigned_to))
-    if (unassigned.length) {
-      assigned.push({ id: 'none', name: 'Unassigned', items: unassigned })
-    }
-    return assigned.filter((g) => g.items.length > 0)
-  }, [visible, groupBySpecialist, specialists])
+
+    const unassigned = visible.filter((c) => partsFor(c.id, assignments).length === 0)
+    if (unassigned.length) byPerson.push({ id: 'none', name: 'Unassigned', items: unassigned })
+
+    return byPerson.filter((g) => g.items.length > 0)
+  }, [visible, groupBySpecialist, specialists, assignments])
 
   const showingTasks = filter === 'tasks'
 
@@ -155,12 +162,16 @@ export default function Overview() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
                 {group.items.map((c) => (
                   <Row
-                    key={c.id}
+                    key={`${group.id}-${c.id}`}
                     consignment={c}
+                    assignments={assignments}
+                    people={people}
                     history={history}
-                    specialists={specialists}
                     canManage={canManage}
-                    onReassign={reassign}
+                    expanded={expanded === `${group.id}-${c.id}`}
+                    onToggleExpand={() =>
+                      setExpanded((prev) => (prev === `${group.id}-${c.id}` ? null : `${group.id}-${c.id}`))
+                    }
                   />
                 ))}
               </div>
@@ -188,6 +199,7 @@ const FILTERS = [
   { id: 'open', label: 'Open' },
   { id: 'overdue', label: 'Overdue' },
   { id: 'awaiting', label: 'Awaiting vendor' },
+  { id: 'shared', label: 'Shared' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'complete', label: 'Complete' },
 ]
@@ -218,42 +230,6 @@ function Filters({ value, onChange }) {
         )
       })}
     </div>
-  )
-}
-
-function AssigneePicker({ id, label, value, specialists, canManage, onChange }) {
-  const name = specialists.find((s) => s.id === value)?.full_name || 'Unassigned'
-
-  if (!canManage) {
-    return (
-      <span style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
-        {name}
-      </span>
-    )
-  }
-
-  return (
-    <>
-      <label htmlFor={id} className="sr-only">{label}</label>
-      <select
-        id={id}
-        value={value || ''}
-        onChange={(e) => onChange(e.target.value)}
-        style={{
-          height: '38px',
-          padding: '0 var(--space-2)',
-          borderRadius: 'var(--radius)',
-          border: '1px solid var(--border-strong)',
-          background: 'var(--surface)',
-          maxWidth: '160px',
-        }}
-      >
-        {!value && <option value="">Unassigned</option>}
-        {specialists.map((s) => (
-          <option key={s.id} value={s.id}>{s.full_name}</option>
-        ))}
-      </select>
-    </>
   )
 }
 
@@ -291,14 +267,7 @@ function TaskList({ tasks, specialists, canManage, onReassign }) {
                   task={t}
                   footer={
                     canManage ? (
-                      <AssigneePicker
-                        id={`task-assign-${t.id}`}
-                        label={`Reassign ${t.title}`}
-                        value={t.assigned_to}
-                        specialists={specialists}
-                        canManage={canManage}
-                        onChange={(to) => onReassign(t.id, to)}
-                      />
+                      <TaskAssignee task={t} specialists={specialists} onReassign={onReassign} />
                     ) : null
                   }
                 />
@@ -311,72 +280,19 @@ function TaskList({ tasks, specialists, canManage, onReassign }) {
   )
 }
 
-function Row({ consignment: c, history, specialists, canManage, onReassign }) {
-  const status = deriveStatus(c)
-  const level = urgency(c)
-  const withCurrent = daysWithCurrentSpecialist(c, history)
-  const inDept = daysInDept(c)
-  const moved = wasReassigned(c, history)
-  const action = nextAction(c)
-
-  const accent = {
-    overdue: 'var(--danger)',
-    soon: 'var(--gold)',
-    frozen: 'var(--navy-soft)',
-    ok: 'var(--border)',
-  }[level]
-
+function TaskAssignee({ task, specialists, onReassign }) {
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr) auto',
-        gap: 'var(--space-4)',
-        alignItems: 'center',
-        background: 'var(--surface)',
-        border: '1px solid var(--border)',
-        borderLeft: `4px solid ${accent}`,
-        padding: 'var(--space-3) var(--space-4)',
-      }}
-    >
-      <div>
-        <p className="receipt">{c.receipt_number}</p>
-        <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
-          {c.vendor_name} · {c.box_count} {plural(c.box_count, 'box')} · in {formatDate(c.arrival_date)}
-        </p>
-      </div>
-
-      <div>
-        <p style={{ fontSize: 'var(--size-sm)' }}>
-          {status === STATUS.COMPLETE ? 'Complete' : action}
-        </p>
-        <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
-          {status === STATUS.COMPLETE ? STATUS_LABEL[status] : countdownLabel(c)}
-        </p>
-      </div>
-
-      <div>
-        <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
-          {inDept} {plural(inDept, 'day')} in dept
-        </p>
-        {moved && (
-          <p style={{ fontSize: 'var(--size-xs)', color: 'var(--text-muted)' }}>
-            {withCurrent} {plural(withCurrent, 'day')} with current
-          </p>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-        {status === STATUS.COMPLETE && !c.storage_location && <Badge tone="gold">No location</Badge>}
-        <AssigneePicker
-          id={`assign-${c.id}`}
-          label={`Assign ${c.receipt_number} to`}
-          value={c.assigned_to}
-          specialists={specialists}
-          canManage={canManage}
-          onChange={(to) => onReassign(c.id, to)}
-        />
-      </div>
-    </div>
-  )
-}
+    <>
+      <label htmlFor={`task-assign-${task.id}`} className="sr-only">
+        Reassign {task.title}
+      </label>
+      <select
+        id={`task-assign-${task.id}`}
+        value={task.assigned_to}
+        onChange={(e) => onReassign(task.id, e.target.value)}
+        style={{
+          height: '38px',
+          padding: '0 var(--space-2)',
+          borderRadius: 'var(--radius)',
+          border: '1px solid var(--border-strong)',
+          background: 'var(--surface)',
