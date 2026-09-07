@@ -14,7 +14,7 @@ const BLANK = {
   vendor_name: '',
   box_count: '',
   arrival_date: today(),
-  assigned_to: '',
+  specialist_id: '',
 }
 
 export default function Auctions() {
@@ -46,7 +46,7 @@ export default function Auctions() {
     if (!form.arrival_date) next.arrival_date = 'Enter the arrival date.'
     else if (form.arrival_date > today()) next.arrival_date = 'The arrival date cannot be in the future.'
 
-    if (!form.assigned_to) next.assigned_to = 'Choose a specialist.'
+    if (!form.specialist_id) next.specialist_id = 'Choose a specialist.'
 
     setErrors(next)
     return Object.keys(next).length === 0
@@ -61,15 +61,15 @@ export default function Auctions() {
       vendor_name: form.vendor_name.trim(),
       box_count: Number(form.box_count),
       arrival_date: form.arrival_date,
-      assigned_to: form.assigned_to,
+      specialist_id: form.specialist_id,
     })
 
     setBusy(false)
     if (!record) return
 
-    const who = specialists.find((s) => s.id === record.assigned_to)?.full_name
+    const who = specialists.find((s) => s.id === form.specialist_id)?.full_name
     setConfirmed({ record, who })
-    setForm({ ...BLANK, assigned_to: form.assigned_to })
+    setForm({ ...BLANK, specialist_id: form.specialist_id })
   }
 
   return (
@@ -180,15 +180,15 @@ export default function Auctions() {
         <Field
           id="assigned"
           label="Specialist"
-          hint="Who will be working on this consignment."
-          error={errors.assigned_to}
+          hint="Who will be working on this. It can be split between people later."
+          error={errors.specialist_id}
         >
           <select
             id="assigned"
-            value={form.assigned_to}
-            onChange={(e) => set('assigned_to', e.target.value)}
+            value={form.specialist_id}
+            onChange={(e) => set('specialist_id', e.target.value)}
             aria-describedby="assigned-hint"
-            aria-invalid={!!errors.assigned_to}
+            aria-invalid={!!errors.specialist_id}
             style={inputStyle}
           >
             <option value="">Choose a specialist</option>
