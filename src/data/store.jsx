@@ -46,7 +46,6 @@ export function StoreProvider({ children }) {
 
   const specialists = people.filter((p) => p.role === 'specialist')
 
-  // Refetch a consignment and its parts after anything the triggers touch
   async function refreshConsignment(id) {
     const [{ data: c }, { data: a }] = await Promise.all([
       supabase.from('consignments').select('*').eq('id', id).single(),
@@ -58,6 +57,19 @@ export function StoreProvider({ children }) {
       setAssignments((prev) => [...prev.filter((row) => row.consignment_id !== id), ...a])
     }
     return c
+  }
+
+  async function refreshHistory(consignmentId) {
+    const { data } = await supabase
+      .from('assignment_history')
+      .select('*')
+      .eq('consignment_id', consignmentId)
+    if (data) {
+      setHistory((prev) => [
+        ...prev.filter((h) => h.consignment_id !== consignmentId),
+        ...data,
+      ])
+    }
   }
 
   // -- my valuation ------------------------------------------
@@ -245,7 +257,11 @@ export function StoreProvider({ children }) {
 
     if (err) {
       setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? before : a)))
-      setError(err.message)
+      setError(
+        err.code === '23505'
+          ? 'That specialist is already on this consignment.'
+          : err.message
+      )
       return
     }
 
@@ -262,7 +278,7 @@ export function StoreProvider({ children }) {
     ).length
 
     if (remaining <= 1) {
-      setError('A consignment needs at least one specialist. Reassign it instead of removing the last person.')
+      setError('A consignment needs at least one specialist. Change who it is assigned to instead of removing the last person.')
       return
     }
 
@@ -281,19 +297,6 @@ export function StoreProvider({ children }) {
 
     await refreshConsignment(before.consignment_id)
     await refreshHistory(before.consignment_id)
-  }
-
-  async function refreshHistory(consignmentId) {
-    const { data } = await supabase
-      .from('assignment_history')
-      .select('*')
-      .eq('consignment_id', consignmentId)
-    if (data) {
-      setHistory((prev) => [
-        ...prev.filter((h) => h.consignment_id !== consignmentId),
-        ...data,
-      ])
-    }
   }
 
   // -- tasks -------------------------------------------------
