@@ -1,26 +1,49 @@
 import { deriveStatus, STATUS, countdownLabel, daysInDept, plural } from './consignments'
+import { partsFor, myPart, outstandingValuers } from './assignments'
 import { taskDueLabel } from './tasks'
 
-export function buildDigest({ consignments, tasks, specialists }) {
+export function buildDigest({ consignments, assignments, tasks, specialists, people }) {
   const openConsignments = consignments.filter((c) => deriveStatus(c) !== STATUS.COMPLETE)
   const openTasks = tasks.filter((t) => !t.completed)
 
-  const sections = specialists.map((s) => ({
-    person: s,
-    consignments: openConsignments
-      .filter((c) => c.assigned_to === s.id)
-      .sort((a, b) => daysInDept(b) - daysInDept(a)),
-    tasks: openTasks.filter((t) => t.assigned_to === s.id),
-  }))
+  const sections = specialists.map((s) => {
+    const theirs = openConsignments
+      .filter((c) => assignments.some((a) => a.consignment_id === c.id && a.specialist_id === s.id))
+      .sort((a, b) => daysInDept(b) - daysInDept(a))
+      .map((c) => ({
+        consignment: c,
+        part: myPart(c.id, assignments, s.id),
+        shared: partsFor(c.id, assignments).length > 1,
+        waitingOn: outstandingValuers(c.id, assignments, people),
+      }))
 
-  const unassigned = openConsignments.filter(
-    (c) => !specialists.some((s) => s.id === c.assigned_to)
-  )
+    return {
+      person: s,
+      items: theirs,
+      tasks: openTasks.filter((t) => t.assigned_to === s.id),
+    }
+  })
 
-  return { sections, unassigned, totalConsignments: openConsignments.length, totalTasks: openTasks.length }
+  const unassigned = openConsignments.filter((c) => partsFor(c.id, assignments).length === 0)
+
+  return {
+    sections,
+    unassigned,
+    totalConsignments: openConsignments.length,
+    totalTasks: openTasks.length,
+  }
 }
 
-function consignmentLine(c) {
+function itemLine(item) {
+  const c = item.consignment
+  const bits = [`${c.receipt_number} — ${c.vendor_name} (${c.box_count} ${plural(c.box_count, 'box')})`]
+  if (item.part?.remit) bits.push(`your part: ${item.part.remit}`)
+  if (item.shared) bits.push('shared')
+  bits.push(countdownLabel(c))
+  return bits.join(' — ')
+}
+
+function plainLine(c) {
   return `${c.receipt_number} — ${c.vendor_name} (${c.box_count} ${plural(c.box_count, 'box')}) — ${countdownLabel(c)}`
 }
 
@@ -36,11 +59,11 @@ export function specialistText(section) {
     lines.push('TASKS', ...section.tasks.map((t) => `  ${taskLine(t)}`), '')
   }
 
-  if (section.consignments.length) {
-    lines.push('CONSIGNMENTS', ...section.consignments.map((c) => `  ${consignmentLine(c)}`), '')
+  if (section.items.length) {
+    lines.push('CONSIGNMENTS', ...section.items.map((i) => `  ${itemLine(i)}`), '')
   }
 
-  if (!section.tasks.length && !section.consignments.length) {
+  if (!section.tasks.length && !section.items.length) {
     lines.push('Nothing outstanding. Thank you.', '')
   }
 
@@ -54,18 +77,18 @@ export function managerText(digest) {
   ]
 
   for (const section of digest.sections) {
-    if (!section.consignments.length && !section.tasks.length) continue
+    if (!section.items.length && !section.tasks.length) continue
     lines.push(section.person.full_name.toUpperCase(), '')
     if (section.tasks.length) {
       lines.push('  Tasks', ...section.tasks.map((t) => `    ${taskLine(t)}`), '')
     }
-    if (section.consignments.length) {
-      lines.push('  Consignments', ...section.consignments.map((c) => `    ${consignmentLine(c)}`), '')
+    if (section.items.length) {
+      lines.push('  Consignments', ...section.items.map((i) => `    ${itemLine(i)}`), '')
     }
   }
 
   if (digest.unassigned.length) {
-    lines.push('UNASSIGNED', '', ...digest.unassigned.map((c) => `  ${consignmentLine(c)}`), '')
+    lines.push('UNASSIGNED', '', ...digest.unassigned.map((c) => `  ${plainLine(c)}`), '')
   }
 
   return lines.join('\n')
