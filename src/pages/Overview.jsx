@@ -20,7 +20,8 @@ export default function Overview() {
 
   const [filter, setFilter] = useState('open')
   const [groupBySpecialist, setGroupBySpecialist] = useState(true)
-  const [expanded, setExpanded] = useState(null)
+  const [expandedRow, setExpandedRow] = useState(null)
+  const [collapsed, setCollapsed] = useState([])
 
   const open = consignments.filter((c) => deriveStatus(c) !== STATUS.COMPLETE)
   const openTasks = tasks.filter((t) => !t.completed)
@@ -31,11 +32,10 @@ export default function Overview() {
     awaiting: open.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR).length,
     overdue: open.filter((c) => urgency(c) === 'overdue').length,
     soon: open.filter((c) => urgency(c) === 'soon').length,
-    shared: open.filter((c) => partsFor(c.id, assignments).length > 1).length,
     tasks: openTasks.length,
     tasksOverdue: openTasks.filter((t) => taskUrgency(t) === 'overdue').length,
     noLocation: consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE && !c.storage_location).length,
-  }), [consignments, open, openTasks, assignments])
+  }), [consignments, open, openTasks])
 
   const visible = useMemo(() => {
     let list = consignments
@@ -68,12 +68,24 @@ export default function Overview() {
 
   const showingTasks = filter === 'tasks'
 
+  function toggleGroup(id) {
+    setCollapsed((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+
+  function collapseAll(ids) {
+    setCollapsed(ids)
+    setExpandedRow(null)
+  }
+
+  const groupIds = showingTasks ? specialists.map((s) => s.id) : groups.map((g) => g.id)
+  const allCollapsed = groupIds.length > 0 && groupIds.every((id) => collapsed.includes(id))
+
   return (
     <>
       <header style={{ marginBottom: 'var(--space-5)' }}>
         <h1>Overview</h1>
         <p style={{ color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
-          {stats.open} open {plural(stats.open, 'consignment')} and {stats.tasks} open {plural(stats.tasks, 'task')} across {specialists.length} specialists
+          {stats.open} open {plural(stats.open, 'consignment')} and {stats.tasks} open {plural(stats.tasks, 'task')} across {specialists.length} people
         </p>
       </header>
 
@@ -105,26 +117,45 @@ export default function Overview() {
         }}
       >
         <Filters value={filter} onChange={setFilter} />
-        {!showingTasks && (
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 'var(--space-2)',
-              marginLeft: 'auto',
-              fontSize: 'var(--size-sm)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={groupBySpecialist}
-              onChange={(e) => setGroupBySpecialist(e.target.checked)}
-              style={{ width: '18px', height: '18px' }}
-            />
-            Group by specialist
-          </label>
-        )}
+
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', marginLeft: 'auto' }}>
+          {(showingTasks || groupBySpecialist) && groupIds.length > 1 && (
+            <button
+              onClick={() => (allCollapsed ? collapseAll([]) : collapseAll(groupIds))}
+              style={{
+                height: '38px',
+                padding: '0 var(--space-3)',
+                borderRadius: 'var(--radius)',
+                border: '1px solid var(--border-strong)',
+                background: 'var(--surface)',
+                fontSize: 'var(--size-sm)',
+                fontWeight: 500,
+              }}
+            >
+              {allCollapsed ? 'Expand all' : 'Collapse all'}
+            </button>
+          )}
+
+          {!showingTasks && (
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                fontSize: 'var(--size-sm)',
+                color: 'var(--text-muted)',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={groupBySpecialist}
+                onChange={(e) => setGroupBySpecialist(e.target.checked)}
+                style={{ width: '18px', height: '18px' }}
+              />
+              Group by specialist
+            </label>
+          )}
+        </div>
       </div>
 
       {showingTasks ? (
@@ -132,6 +163,8 @@ export default function Overview() {
           tasks={openTasks}
           specialists={specialists}
           canManage={canManage}
+          collapsed={collapsed}
+          onToggleGroup={toggleGroup}
           onReassign={reassignTask}
         />
       ) : (
@@ -149,34 +182,41 @@ export default function Overview() {
             </p>
           )}
 
-          {groups.map((group) => (
-            <section key={group.id} style={{ marginBottom: 'var(--space-6)' }}>
-              {group.name && (
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
-                  <h2 style={{ fontSize: 'var(--size-lg)' }}>{group.name}</h2>
-                  <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
-                    {group.items.length}
-                  </span>
-                </div>
-              )}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                {group.items.map((c) => (
-                  <Row
-                    key={`${group.id}-${c.id}`}
-                    consignment={c}
-                    assignments={assignments}
-                    people={people}
-                    history={history}
-                    canManage={canManage}
-                    expanded={expanded === `${group.id}-${c.id}`}
-                    onToggleExpand={() =>
-                      setExpanded((prev) => (prev === `${group.id}-${c.id}` ? null : `${group.id}-${c.id}`))
-                    }
+          {groups.map((group) => {
+            const isCollapsed = collapsed.includes(group.id)
+            return (
+              <section key={group.id} style={{ marginBottom: 'var(--space-5)' }}>
+                {group.name && (
+                  <GroupHeader
+                    name={group.name}
+                    count={group.items.length}
+                    summary={consignmentSummary(group.items)}
+                    collapsed={isCollapsed}
+                    onToggle={() => toggleGroup(group.id)}
                   />
-                ))}
-              </div>
-            </section>
-          ))}
+                )}
+
+                {!isCollapsed && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                    {group.items.map((c) => (
+                      <Row
+                        key={`${group.id}-${c.id}`}
+                        consignment={c}
+                        assignments={assignments}
+                        people={people}
+                        history={history}
+                        canManage={canManage}
+                        expanded={expandedRow === `${group.id}-${c.id}`}
+                        onToggleExpand={() =>
+                          setExpandedRow((prev) => (prev === `${group.id}-${c.id}` ? null : `${group.id}-${c.id}`))
+                        }
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            )
+          })}
 
           {stats.noLocation > 0 && filter !== 'no_location' && (
             <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
@@ -192,6 +232,68 @@ export default function Overview() {
         </>
       )}
     </>
+  )
+}
+
+function consignmentSummary(items) {
+  const overdue = items.filter((c) => urgency(c) === 'overdue').length
+  const soon = items.filter((c) => urgency(c) === 'soon').length
+  const bits = []
+  if (overdue) bits.push({ text: `${overdue} overdue`, tone: 'danger' })
+  if (soon) bits.push({ text: `${soon} due soon`, tone: 'gold' })
+  return bits
+}
+
+function taskSummary(items) {
+  const overdue = items.filter((t) => taskUrgency(t) === 'overdue').length
+  const soon = items.filter((t) => taskUrgency(t) === 'soon').length
+  const bits = []
+  if (overdue) bits.push({ text: `${overdue} overdue`, tone: 'danger' })
+  if (soon) bits.push({ text: `${soon} due soon`, tone: 'gold' })
+  return bits
+}
+
+function GroupHeader({ name, count, summary, collapsed, onToggle }) {
+  return (
+    <button
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--space-3)',
+        width: '100%',
+        minHeight: 'var(--control-height)',
+        padding: 'var(--space-2) var(--space-3)',
+        marginBottom: collapsed ? 0 : 'var(--space-3)',
+        borderRadius: 'var(--radius)',
+        background: collapsed ? 'var(--surface-sunken)' : 'transparent',
+        textAlign: 'left',
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          display: 'inline-block',
+          width: '14px',
+          color: 'var(--text-muted)',
+          transform: collapsed ? 'rotate(-90deg)' : 'none',
+          transition: 'transform 120ms ease',
+          fontSize: 'var(--size-xs)',
+        }}
+      >
+        ▼
+      </span>
+
+      <span style={{ fontSize: 'var(--size-lg)', fontWeight: 700 }}>{name}</span>
+      <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>{count}</span>
+
+      <span style={{ display: 'flex', gap: 'var(--space-2)', marginLeft: 'auto', flexWrap: 'wrap' }}>
+        {summary.map((bit) => (
+          <Badge key={bit.text} tone={bit.tone}>{bit.text}</Badge>
+        ))}
+      </span>
+    </button>
   )
 }
 
@@ -233,7 +335,7 @@ function Filters({ value, onChange }) {
   )
 }
 
-function TaskList({ tasks, specialists, canManage, onReassign }) {
+function TaskList({ tasks, specialists, canManage, collapsed, onToggleGroup, onReassign }) {
   if (tasks.length === 0) {
     return (
       <p
@@ -254,25 +356,33 @@ function TaskList({ tasks, specialists, canManage, onReassign }) {
       {specialists.map((s) => {
         const items = sortTasks(tasks.filter((t) => t.assigned_to === s.id))
         if (items.length === 0) return null
+        const isCollapsed = collapsed.includes(s.id)
+
         return (
-          <section key={s.id} style={{ marginBottom: 'var(--space-6)' }}>
-            <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-3)', marginBottom: 'var(--space-3)' }}>
-              <h2 style={{ fontSize: 'var(--size-lg)' }}>{s.full_name}</h2>
-              <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>{items.length}</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              {items.map((t) => (
-                <TaskCard
-                  key={t.id}
-                  task={t}
-                  footer={
-                    canManage ? (
-                      <TaskAssignee task={t} specialists={specialists} onReassign={onReassign} />
-                    ) : null
-                  }
-                />
-              ))}
-            </div>
+          <section key={s.id} style={{ marginBottom: 'var(--space-5)' }}>
+            <GroupHeader
+              name={s.full_name}
+              count={items.length}
+              summary={taskSummary(items)}
+              collapsed={isCollapsed}
+              onToggle={() => onToggleGroup(s.id)}
+            />
+
+            {!isCollapsed && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                {items.map((t) => (
+                  <TaskCard
+                    key={t.id}
+                    task={t}
+                    footer={
+                      canManage ? (
+                        <TaskAssignee task={t} specialists={specialists} onReassign={onReassign} />
+                      ) : null
+                    }
+                  />
+                ))}
+              </div>
+            )}
           </section>
         )
       })}
