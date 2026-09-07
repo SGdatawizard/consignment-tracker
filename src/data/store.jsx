@@ -9,6 +9,7 @@ export function StoreProvider({ children }) {
   const currentUserId = profile.id
 
   const [consignments, setConsignments] = useState([])
+  const [assignments, setAssignments] = useState([])
   const [history, setHistory] = useState([])
   const [tasks, setTasks] = useState([])
   const [people, setPeople] = useState([])
@@ -17,14 +18,15 @@ export function StoreProvider({ children }) {
   const [lastChange, setLastChange] = useState(null)
 
   const load = useCallback(async () => {
-    const [c, h, t, p] = await Promise.all([
+    const [c, a, h, t, p] = await Promise.all([
       supabase.from('consignments').select('*').is('deleted_at', null).order('arrival_date'),
+      supabase.from('consignment_assignments').select('*'),
       supabase.from('assignment_history').select('*'),
       supabase.from('tasks').select('*').is('deleted_at', null).order('created_at', { ascending: false }),
       supabase.from('profiles').select('*').eq('active', true).order('full_name'),
     ])
 
-    const failure = [c, h, t, p].find((r) => r.error)
+    const failure = [c, a, h, t, p].find((r) => r.error)
     if (failure) {
       setError(failure.error.message)
       setLoading(false)
@@ -32,6 +34,7 @@ export function StoreProvider({ children }) {
     }
 
     setConsignments(c.data)
+    setAssignments(a.data)
     setHistory(h.data)
     setTasks(t.data)
     setPeople(p.data)
@@ -43,87 +46,69 @@ export function StoreProvider({ children }) {
 
   const specialists = people.filter((p) => p.role === 'specialist')
 
-  // -- consignments ------------------------------------------
+  // Refetch a consignment and its parts after anything the triggers touch
+  async function refreshConsignment(id) {
+    const [{ data: c }, { data: a }] = await Promise.all([
+      supabase.from('consignments').select('*').eq('id', id).single(),
+      supabase.from('consignment_assignments').select('*').eq('consignment_id', id),
+    ])
 
-  async function toggleFlag(id, field, value) {
-    const before = consignments.find((c) => c.id === id)
-    if (!before) return
+    if (c) setConsignments((prev) => prev.map((row) => (row.id === id ? c : row)))
+    if (a) {
+      setAssignments((prev) => [...prev.filter((row) => row.consignment_id !== id), ...a])
+    }
+    return c
+  }
 
-    setConsignments((prev) => prev.map((c) => (c.id === id ? { ...c, [field]: value } : c)))
+  // -- my valuation ------------------------------------------
 
-    const { data, error: err } = await supabase
-      .from('consignments')
-      .update({ [field]: value })
-      .eq('id', id)
-      .select()
-      .single()
+  async function setMyValued(consignmentId, value) {
+    const part = assignments.find(
+      (a) => a.consignment_id === consignmentId && a.specialist_id === currentUserId
+    )
+    if (!part) return
+
+    const before = consignments.find((c) => c.id === consignmentId)
+
+    setAssignments((prev) =>
+      prev.map((a) => (a.id === part.id ? { ...a, valued: value } : a))
+    )
+
+    const { error: err } = await supabase
+      .from('consignment_assignments')
+      .update({ valued: value })
+      .eq('id', part.id)
 
     if (err) {
-      setConsignments((prev) => prev.map((c) => (c.id === id ? before : c)))
+      setAssignments((prev) => prev.map((a) => (a.id === part.id ? part : a)))
       setError(err.message)
       return
     }
 
-    setConsignments((prev) => prev.map((c) => (c.id === id ? data : c)))
-
-    if (data.status !== before.status) {
+    const after = await refreshConsignment(consignmentId)
+    if (after && before && after.status !== before.status) {
       setLastChange({
-        id,
-        receipt: data.receipt_number,
-        field,
-        movedTo: data.status,
-        snapshot: before,
+        id: consignmentId,
+        receipt: after.receipt_number,
+        movedTo: after.status,
+        revert: { kind: 'assignment', id: part.id, value: !value },
       })
     }
   }
 
-  async function undoLastChange() {
-    if (!lastChange) return
-    const { field, snapshot, id } = lastChange
-    setLastChange(null)
+  // -- shared flags ------------------------------------------
 
-    const { data, error: err } = await supabase
-      .from('consignments')
-      .update({ [field]: snapshot[field] })
-      .eq('id', id)
-      .select()
-      .single()
-
-    if (err) return setError(err.message)
-    setConsignments((prev) => prev.map((c) => (c.id === id ? data : c)))
-  }
-
-  function dismissLastChange() {
-    setLastChange(null)
-  }
-
-  async function addConsignment(fields) {
-    const { data, error: err } = await supabase
-      .from('consignments')
-      .insert({ ...fields, intake_specialist_id: currentUserId })
-      .select()
-      .single()
-
-    if (err) {
-      setError(err.message)
-      return null
-    }
-
-    setConsignments((prev) => [...prev, data])
-    return data
-  }
-
-  async function reassign(consignmentId, toUserId) {
+  async function setSharedFlag(consignmentId, field, value) {
     const before = consignments.find((c) => c.id === consignmentId)
-    if (!before || before.assigned_to === toUserId) return
+    if (!before) return
 
     setConsignments((prev) =>
-      prev.map((c) => (c.id === consignmentId ? { ...c, assigned_to: toUserId } : c))
+      prev.map((c) => (c.id === consignmentId ? { ...c, [field]: value } : c))
     )
 
     const { data, error: err } = await supabase
       .from('consignments')
-      .update({ assigned_to: toUserId })
+      .update({ [field]: value })
       .eq('id', consignmentId)
       .select()
       .single()
@@ -136,13 +121,67 @@ export function StoreProvider({ children }) {
 
     setConsignments((prev) => prev.map((c) => (c.id === consignmentId ? data : c)))
 
-    const { data: rows } = await supabase
-      .from('assignment_history')
-      .select('*')
-      .eq('consignment_id', consignmentId)
-    if (rows) {
-      setHistory((prev) => [...prev.filter((h) => h.consignment_id !== consignmentId), ...rows])
+    if (data.status !== before.status) {
+      setLastChange({
+        id: consignmentId,
+        receipt: data.receipt_number,
+        movedTo: data.status,
+        revert: { kind: 'consignment', field, value: before[field] },
+      })
     }
+  }
+
+  async function undoLastChange() {
+    if (!lastChange) return
+    const { revert, id } = lastChange
+    setLastChange(null)
+
+    if (revert.kind === 'assignment') {
+      const { error: err } = await supabase
+        .from('consignment_assignments')
+        .update({ valued: revert.value })
+        .eq('id', revert.id)
+      if (err) return setError(err.message)
+    } else {
+      const { error: err } = await supabase
+        .from('consignments')
+        .update({ [revert.field]: revert.value })
+        .eq('id', id)
+      if (err) return setError(err.message)
+    }
+
+    await refreshConsignment(id)
+  }
+
+  function dismissLastChange() {
+    setLastChange(null)
+  }
+
+  // -- consignments ------------------------------------------
+
+  async function addConsignment({ specialist_id, ...fields }) {
+    const { data, error: err } = await supabase
+      .from('consignments')
+      .insert({ ...fields, intake_specialist_id: currentUserId })
+      .select()
+      .single()
+
+    if (err) {
+      setError(err.message)
+      return null
+    }
+
+    const { error: assignErr } = await supabase
+      .from('consignment_assignments')
+      .insert({ consignment_id: data.id, specialist_id, created_by: currentUserId })
+
+    if (assignErr) {
+      setError(`Booked in, but assigning failed: ${assignErr.message}`)
+    }
+
+    setConsignments((prev) => [...prev, data])
+    await refreshConsignment(data.id)
+    return data
   }
 
   async function setStorageLocation(consignmentId, location) {
@@ -162,6 +201,98 @@ export function StoreProvider({ children }) {
     if (err) {
       setConsignments((prev) => prev.map((c) => (c.id === consignmentId ? before : c)))
       setError(err.message)
+    }
+  }
+
+  // -- assignments -------------------------------------------
+
+  async function addAssignment(consignmentId, specialistId, remit) {
+    const { error: err } = await supabase
+      .from('consignment_assignments')
+      .insert({
+        consignment_id: consignmentId,
+        specialist_id: specialistId,
+        remit: (remit || '').trim(),
+        created_by: currentUserId,
+      })
+
+    if (err) {
+      setError(
+        err.code === '23505'
+          ? 'That specialist is already on this consignment.'
+          : err.message
+      )
+      return false
+    }
+
+    await refreshConsignment(consignmentId)
+    await refreshHistory(consignmentId)
+    return true
+  }
+
+  async function updateAssignment(assignmentId, changes) {
+    const before = assignments.find((a) => a.id === assignmentId)
+    if (!before) return
+
+    setAssignments((prev) =>
+      prev.map((a) => (a.id === assignmentId ? { ...a, ...changes } : a))
+    )
+
+    const { error: err } = await supabase
+      .from('consignment_assignments')
+      .update(changes)
+      .eq('id', assignmentId)
+
+    if (err) {
+      setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? before : a)))
+      setError(err.message)
+      return
+    }
+
+    await refreshConsignment(before.consignment_id)
+    await refreshHistory(before.consignment_id)
+  }
+
+  async function removeAssignment(assignmentId) {
+    const before = assignments.find((a) => a.id === assignmentId)
+    if (!before) return
+
+    const remaining = assignments.filter(
+      (a) => a.consignment_id === before.consignment_id
+    ).length
+
+    if (remaining <= 1) {
+      setError('A consignment needs at least one specialist. Reassign it instead of removing the last person.')
+      return
+    }
+
+    setAssignments((prev) => prev.filter((a) => a.id !== assignmentId))
+
+    const { error: err } = await supabase
+      .from('consignment_assignments')
+      .delete()
+      .eq('id', assignmentId)
+
+    if (err) {
+      setAssignments((prev) => [...prev, before])
+      setError(err.message)
+      return
+    }
+
+    await refreshConsignment(before.consignment_id)
+    await refreshHistory(before.consignment_id)
+  }
+
+  async function refreshHistory(consignmentId) {
+    const { data } = await supabase
+      .from('assignment_history')
+      .select('*')
+      .eq('consignment_id', consignmentId)
+    if (data) {
+      setHistory((prev) => [
+        ...prev.filter((h) => h.consignment_id !== consignmentId),
+        ...data,
+      ])
     }
   }
 
@@ -230,6 +361,7 @@ export function StoreProvider({ children }) {
 
   const value = {
     consignments,
+    assignments,
     history,
     tasks,
     people,
@@ -240,10 +372,13 @@ export function StoreProvider({ children }) {
     error,
     dismissError: () => setError(null),
     reload: load,
-    toggleFlag,
+    setMyValued,
+    setSharedFlag,
     addConsignment,
-    reassign,
     setStorageLocation,
+    addAssignment,
+    updateAssignment,
+    removeAssignment,
     addTask,
     toggleTask,
     reassignTask,
