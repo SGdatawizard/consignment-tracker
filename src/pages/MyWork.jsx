@@ -3,19 +3,23 @@ import { useStore } from '../data/store'
 import ConsignmentCard from '../components/ConsignmentCard'
 import TaskCard from '../components/TaskCard'
 import { deriveStatus, sortByUrgency, STATUS, formatDate, plural } from '../lib/consignments'
+import { consignmentsFor } from '../lib/assignments'
 import { sortTasks } from '../lib/tasks'
 
 export default function MyWork() {
-  const { consignments, tasks, currentUser, toggleFlag, toggleTask, setStorageLocation } = useStore()
+  const {
+    consignments, assignments, tasks, people, currentUserId, currentUser,
+    setMyValued, setSharedFlag, toggleTask, setStorageLocation,
+  } = useStore()
 
   const mine = useMemo(
-    () => consignments.filter((c) => c.assigned_to === currentUser.id),
-    [consignments, currentUser.id]
+    () => consignmentsFor(currentUserId, consignments, assignments),
+    [consignments, assignments, currentUserId]
   )
 
   const myTasks = useMemo(
-    () => tasks.filter((t) => t.assigned_to === currentUser.id),
-    [tasks, currentUser.id]
+    () => tasks.filter((t) => t.assigned_to === currentUserId),
+    [tasks, currentUserId]
   )
 
   const openTasks = sortTasks(myTasks.filter((t) => !t.completed))
@@ -31,6 +35,14 @@ export default function MyWork() {
 
   const nothingAtAll = mine.length === 0 && myTasks.length === 0
 
+  const cardProps = {
+    assignments,
+    people,
+    currentUserId,
+    onSetMyValued: setMyValued,
+    onSetSharedFlag: setSharedFlag,
+  }
+
   return (
     <>
       <header style={{ marginBottom: 'var(--space-6)' }}>
@@ -41,9 +53,7 @@ export default function MyWork() {
         </p>
       </header>
 
-      {nothingAtAll && (
-        <Empty>Nothing is assigned to you at the moment.</Empty>
-      )}
+      {nothingAtAll && <Empty>Nothing is assigned to you at the moment.</Empty>}
 
       {openTasks.length > 0 && (
         <Section title="Tasks" count={openTasks.length}>
@@ -76,18 +86,16 @@ export default function MyWork() {
       {mine.length > 0 && (
         <Section title="In progress" count={inProgress.length}>
           {inProgress.map((c) => (
-            <ConsignmentCard key={c.id} consignment={c} onToggle={toggleFlag} />
+            <ConsignmentCard key={c.id} consignment={c} {...cardProps} />
           ))}
-          {inProgress.length === 0 && (
-            <Empty>No consignments waiting on you right now.</Empty>
-          )}
+          {inProgress.length === 0 && <Empty>No consignments waiting on you right now.</Empty>}
         </Section>
       )}
 
       {awaiting.length > 0 && (
         <Section title="Awaiting vendor" count={awaiting.length}>
           {awaiting.map((c) => (
-            <ConsignmentCard key={c.id} consignment={c} onToggle={toggleFlag} />
+            <ConsignmentCard key={c.id} consignment={c} {...cardProps} />
           ))}
         </Section>
       )}
@@ -98,6 +106,7 @@ export default function MyWork() {
             <ConsignmentCard
               key={c.id}
               consignment={c}
+              {...cardProps}
               footer={<StorageField consignment={c} onSave={setStorageLocation} />}
             />
           ))}
