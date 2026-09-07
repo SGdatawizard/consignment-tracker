@@ -3,7 +3,7 @@ import { useStore } from '../data/store'
 import Field, { inputStyle } from '../components/Field'
 import { formatDateLong, plural } from '../lib/consignments'
 
-const RECEIPT_PATTERN = /^R\d{7}$/
+const RECEIPT_PATTERN = /^R\d{4,}$/
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -34,7 +34,7 @@ export default function Auctions() {
     const receipt = form.receipt_number.trim().toUpperCase()
 
     if (!receipt) next.receipt_number = 'Enter a receipt number.'
-    else if (!RECEIPT_PATTERN.test(receipt)) next.receipt_number = 'Receipt numbers look like R2000348 — an R followed by 7 digits.'
+    else if (!RECEIPT_PATTERN.test(receipt)) next.receipt_number = 'Receipt numbers start with R followed by numbers, for example R2000348.'
     else if (consignments.some((c) => c.receipt_number === receipt)) next.receipt_number = `${receipt} is already booked in.`
 
     if (!form.vendor_name.trim()) next.vendor_name = 'Enter a vendor name.'
