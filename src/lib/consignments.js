@@ -66,23 +66,20 @@ export function daysInDept(c) {
   return differenceInCalendarDays(new Date(), parseISO(c.arrival_date))
 }
 
-export function daysWithCurrentSpecialist(c, history) {
-  const moves = history
-    .filter((h) => h.consignment_id === c.id && h.to_user === c.assigned_to)
-    .sort((a, b) => new Date(b.changed_at) - new Date(a.changed_at))
-  const since = moves.length ? new Date(moves[0].changed_at) : parseISO(c.arrival_date)
-  return differenceInCalendarDays(new Date(), since)
+export function daysWithSpecialist(assignment) {
+  return differenceInCalendarDays(new Date(), new Date(assignment.created_at))
 }
 
 export function wasReassigned(c, history) {
-  return history.some((h) => h.consignment_id === c.id)
+  return history.some(
+    (h) => h.consignment_id === c.id && h.from_user !== null && h.to_user !== null
+  )
 }
 
 export function nextAction(c) {
   const status = deriveStatus(c)
   if (status === STATUS.COMPLETE) return null
   if (status === STATUS.AWAITING_VENDOR) return 'Waiting on the vendor'
-  if (!c.valued && !c.vendor_emailed) return 'Needs valuing'
   if (!c.valued) return 'Needs valuing'
   return 'Needs vendor emailing'
 }
