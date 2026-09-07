@@ -1,6 +1,6 @@
 import { createContext, useContext, useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { useAuth } from './auth'
+import { useAuth, ASSIGNABLE_ROLES } from './auth'
 
 const StoreContext = createContext(null)
 
@@ -44,7 +44,8 @@ export function StoreProvider({ children }) {
 
   useEffect(() => { load() }, [load])
 
-  const specialists = people.filter((p) => p.role === 'specialist')
+  // Everyone who can hold a consignment or a task
+  const specialists = people.filter((p) => ASSIGNABLE_ROLES.includes(p.role))
 
   async function refreshConsignment(id) {
     const [{ data: c }, { data: a }] = await Promise.all([
@@ -231,7 +232,7 @@ export function StoreProvider({ children }) {
     if (err) {
       setError(
         err.code === '23505'
-          ? 'That specialist is already on this consignment.'
+          ? 'That person is already on this consignment.'
           : err.message
       )
       return false
@@ -259,7 +260,7 @@ export function StoreProvider({ children }) {
       setAssignments((prev) => prev.map((a) => (a.id === assignmentId ? before : a)))
       setError(
         err.code === '23505'
-          ? 'That specialist is already on this consignment.'
+          ? 'That person is already on this consignment.'
           : err.message
       )
       return
@@ -278,7 +279,7 @@ export function StoreProvider({ children }) {
     ).length
 
     if (remaining <= 1) {
-      setError('A consignment needs at least one specialist. Change who it is assigned to instead of removing the last person.')
+      setError('A consignment needs at least one person. Change who it is assigned to instead of removing the last one.')
       return
     }
 
