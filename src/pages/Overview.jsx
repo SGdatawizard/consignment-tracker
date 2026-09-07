@@ -296,3 +296,124 @@ function TaskAssignee({ task, specialists, onReassign }) {
           borderRadius: 'var(--radius)',
           border: '1px solid var(--border-strong)',
           background: 'var(--surface)',
+          maxWidth: '180px',
+        }}
+      >
+        {specialists.map((s) => (
+          <option key={s.id} value={s.id}>{s.full_name}</option>
+        ))}
+      </select>
+    </>
+  )
+}
+
+function Row({ consignment: c, assignments, people, history, canManage, expanded, onToggleExpand }) {
+  const status = deriveStatus(c)
+  const level = urgency(c)
+  const inDept = daysInDept(c)
+  const moved = wasReassigned(c, history)
+  const parts = partsFor(c.id, assignments)
+  const progress = valuationProgress(c.id, assignments)
+  const action = nextActionShared(c, assignments, people)
+
+  const names = parts
+    .map((p) => people.find((u) => u.id === p.specialist_id)?.full_name)
+    .filter(Boolean)
+
+  const accent = {
+    overdue: 'var(--danger)',
+    soon: 'var(--gold)',
+    frozen: 'var(--navy-soft)',
+    ok: 'var(--border)',
+  }[level]
+
+  return (
+    <div
+      style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderLeft: `4px solid ${accent}`,
+      }}
+    >
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr) auto',
+          gap: 'var(--space-4)',
+          alignItems: 'center',
+          padding: 'var(--space-3) var(--space-4)',
+        }}
+      >
+        <div>
+          <p className="receipt">
+            {c.receipt_number}
+            {parts.length > 1 && (
+              <span style={{ marginLeft: 'var(--space-2)' }}>
+                <Badge tone="navy">Split {progress.done}/{progress.total}</Badge>
+              </span>
+            )}
+          </p>
+          <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+            {c.vendor_name} · {c.box_count} {plural(c.box_count, 'box')} · in {formatDate(c.arrival_date)}
+          </p>
+        </div>
+
+        <div>
+          <p style={{ fontSize: 'var(--size-sm)' }}>
+            {status === STATUS.COMPLETE ? 'Complete' : action}
+          </p>
+          <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+            {status === STATUS.COMPLETE ? STATUS_LABEL[status] : countdownLabel(c)}
+          </p>
+        </div>
+
+        <div>
+          <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+            {inDept} {plural(inDept, 'day')} in dept
+          </p>
+          {moved && (
+            <p style={{ fontSize: 'var(--size-xs)', color: 'var(--text-muted)' }}>Reassigned</p>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          {status === STATUS.COMPLETE && !c.storage_location && <Badge tone="gold">No location</Badge>}
+          {!canManage && (
+            <span style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+              {names.join(', ') || 'Unassigned'}
+            </span>
+          )}
+          {canManage && (
+            <button
+              onClick={onToggleExpand}
+              aria-expanded={expanded}
+              style={{
+                height: '38px',
+                padding: '0 var(--space-3)',
+                borderRadius: 'var(--radius)',
+                border: '1px solid var(--border-strong)',
+                fontSize: 'var(--size-sm)',
+                fontWeight: 500,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {expanded ? 'Close' : names.length > 1 ? `${names.length} people` : names[0]?.split(' ')[0] || 'Assign'}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {expanded && canManage && (
+        <div
+          style={{
+            borderTop: '1px solid var(--border)',
+            padding: 'var(--space-4)',
+            background: 'var(--page)',
+          }}
+        >
+          <SplitPanel consignment={c} />
+        </div>
+      )}
+    </div>
+  )
+}
