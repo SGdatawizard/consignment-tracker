@@ -6,19 +6,45 @@ import Badge from '../components/Badge'
 import TaskCard from '../components/TaskCard'
 import NewTaskForm from '../components/NewTaskForm'
 import SplitPanel from '../components/SplitPanel'
+import LocationField from '../components/LocationField'
 import {
-  deriveStatus, STATUS, STATUS_LABEL, urgency, countdownLabel,
-  daysInDept, wasReassigned, sortByUrgency, formatDate, plural,
+  deriveStatus, STATUS, STATUS_LABEL, urgency, countdownLabel, daysRemaining,
+  daysInDept, wasReassigned, formatDate, plural,
 } from '../lib/consignments'
 import { partsFor, nextActionShared, valuationProgress } from '../lib/assignments'
 import { sortTasks, taskUrgency } from '../lib/tasks'
+import { chaserLabel } from '../lib/chase'
+
+const SORTS = [
+  { id: 'urgent', label: 'Most urgent first' },
+  { id: 'least_urgent', label: 'Least urgent first' },
+  { id: 'oldest', label: 'Longest in dept' },
+  { id: 'newest', label: 'Most recently arrived' },
+  { id: 'receipt', label: 'Receipt number' },
+  { id: 'vendor', label: 'Vendor name' },
+]
+
+function applySort(list, sort) {
+  const out = [...list]
+  if (sort === 'urgent') return out.sort((a, b) => daysRemaining(a) - daysRemaining(b))
+  if (sort === 'least_urgent') return out.sort((a, b) => daysRemaining(b) - daysRemaining(a))
+  if (sort === 'oldest') return out.sort((a, b) => new Date(a.arrival_date) - new Date(b.arrival_date))
+  if (sort === 'newest') return out.sort((a, b) => new Date(b.arrival_date) - new Date(a.arrival_date))
+  if (sort === 'receipt') return out.sort((a, b) => a.receipt_number.localeCompare(b.receipt_number))
+  if (sort === 'vendor') return out.sort((a, b) => a.vendor_name.localeCompare(b.vendor_name))
+  return out
+}
 
 export default function Overview() {
-  const { consignments, assignments, tasks, history, people, specialists, reassignTask } = useStore()
+  const {
+    consignments, assignments, tasks, history, people, specialists, chaser,
+    reassignTask, setStorageLocation, setNeedsChasing,
+  } = useStore()
   const { profile } = useAuth()
   const canManage = CAN.manage(profile.role)
 
   const [filter, setFilter] = useState('open')
+  const [sort, setSort] = useState('urgent')
   const [groupBySpecialist, setGroupBySpecialist] = useState(true)
   const [expandedRow, setExpandedRow] = useState(null)
   const [collapsed, setCollapsed] = useState([])
@@ -32,9 +58,10 @@ export default function Overview() {
     awaiting: open.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR).length,
     overdue: open.filter((c) => urgency(c) === 'overdue').length,
     soon: open.filter((c) => urgency(c) === 'soon').length,
+    chasing: open.filter((c) => c.needs_chasing).length,
     tasks: openTasks.length,
     tasksOverdue: openTasks.filter((t) => taskUrgency(t) === 'overdue').length,
-    noLocation: consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE && !c.storage_location).length,
+    noLocation: consignments.filter((c) => !c.storage_location).length,
   }), [consignments, open, openTasks])
 
   const visible = useMemo(() => {
@@ -42,12 +69,13 @@ export default function Overview() {
     if (filter === 'open') list = open
     if (filter === 'overdue') list = open.filter((c) => urgency(c) === 'overdue')
     if (filter === 'awaiting') list = open.filter((c) => deriveStatus(c) === STATUS.AWAITING_VENDOR)
+    if (filter === 'chasing') list = open.filter((c) => c.needs_chasing)
     if (filter === 'shared') list = open.filter((c) => partsFor(c.id, assignments).length > 1)
     if (filter === 'complete') list = consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE)
-    if (filter === 'no_location') list = consignments.filter((c) => deriveStatus(c) === STATUS.COMPLETE && !c.storage_location)
+    if (filter === 'no_location') list = consignments.filter((c) => !c.storage_location)
     if (filter === 'tasks') list = []
-    return sortByUrgency(list)
-  }, [consignments, open, filter, assignments])
+    return applySort(list, sort)
+  }, [consignments, open, filter, assignments, sort])
 
   const groups = useMemo(() => {
     if (!groupBySpecialist) return [{ id: 'all', name: null, items: visible }]
@@ -70,11 +98,6 @@ export default function Overview() {
 
   function toggleGroup(id) {
     setCollapsed((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
-  }
-
-  function collapseAll(ids) {
-    setCollapsed(ids)
-    setExpandedRow(null)
   }
 
   const groupIds = showingTasks ? specialists.map((s) => s.id) : groups.map((g) => g.id)
@@ -104,6 +127,7 @@ export default function Overview() {
         <StatTile label="Awaiting vendor" value={stats.awaiting} />
         <StatTile label="Due within 7 days" value={stats.soon} tone="gold" />
         <StatTile label="Overdue" value={stats.overdue} tone="danger" />
+        <StatTile label="To chase" value={stats.chasing} tone={stats.chasing > 0 ? 'gold' : 'neutral'} />
         <StatTile label="Open tasks" value={stats.tasks} tone={stats.tasksOverdue > 0 ? 'danger' : 'neutral'} />
       </div>
 
@@ -118,10 +142,33 @@ export default function Overview() {
       >
         <Filters value={filter} onChange={setFilter} />
 
-        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', marginLeft: 'auto' }}>
+        <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'center', marginLeft: 'auto', flexWrap: 'wrap' }}>
+          {!showingTasks && (
+            <>
+              <label htmlFor="sort" className="sr-only">Sort by</label>
+              <select
+                id="sort"
+                value={sort}
+                onChange={(e) => setSort(e.target.value)}
+                style={{
+                  height: '38px',
+                  padding: '0 var(--space-3)',
+                  borderRadius: 'var(--radius)',
+                  border: '1px solid var(--border-strong)',
+                  background: 'var(--surface)',
+                  fontSize: 'var(--size-sm)',
+                }}
+              >
+                {SORTS.map((s) => (
+                  <option key={s.id} value={s.id}>{s.label}</option>
+                ))}
+              </select>
+            </>
+          )}
+
           {(showingTasks || groupBySpecialist) && groupIds.length > 1 && (
             <button
-              onClick={() => (allCollapsed ? collapseAll([]) : collapseAll(groupIds))}
+              onClick={() => { setCollapsed(allCollapsed ? [] : groupIds); setExpandedRow(null) }}
               style={{
                 height: '38px',
                 padding: '0 var(--space-3)',
@@ -205,11 +252,14 @@ export default function Overview() {
                         assignments={assignments}
                         people={people}
                         history={history}
+                        chaser={chaser}
                         canManage={canManage}
                         expanded={expandedRow === `${group.id}-${c.id}`}
                         onToggleExpand={() =>
                           setExpandedRow((prev) => (prev === `${group.id}-${c.id}` ? null : `${group.id}-${c.id}`))
                         }
+                        onSaveLocation={setStorageLocation}
+                        onSetNeedsChasing={setNeedsChasing}
                       />
                     ))}
                   </div>
@@ -220,7 +270,7 @@ export default function Overview() {
 
           {stats.noLocation > 0 && filter !== 'no_location' && (
             <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
-              {stats.noLocation} completed {plural(stats.noLocation, 'consignment')} with no storage location recorded.{' '}
+              {stats.noLocation} {plural(stats.noLocation, 'consignment')} with no storage location recorded.{' '}
               <button
                 onClick={() => setFilter('no_location')}
                 style={{ color: 'var(--navy)', textDecoration: 'underline', fontWeight: 500 }}
@@ -238,9 +288,11 @@ export default function Overview() {
 function consignmentSummary(items) {
   const overdue = items.filter((c) => urgency(c) === 'overdue').length
   const soon = items.filter((c) => urgency(c) === 'soon').length
+  const chasing = items.filter((c) => c.needs_chasing).length
   const bits = []
   if (overdue) bits.push({ text: `${overdue} overdue`, tone: 'danger' })
   if (soon) bits.push({ text: `${soon} due soon`, tone: 'gold' })
+  if (chasing) bits.push({ text: `${chasing} chasing`, tone: 'gold' })
   return bits
 }
 
@@ -301,6 +353,7 @@ const FILTERS = [
   { id: 'open', label: 'Open' },
   { id: 'overdue', label: 'Overdue' },
   { id: 'awaiting', label: 'Awaiting vendor' },
+  { id: 'chasing', label: 'To chase' },
   { id: 'shared', label: 'Shared' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'complete', label: 'Complete' },
@@ -417,7 +470,10 @@ function TaskAssignee({ task, specialists, onReassign }) {
   )
 }
 
-function Row({ consignment: c, assignments, people, history, canManage, expanded, onToggleExpand }) {
+function Row({
+  consignment: c, assignments, people, history, chaser, canManage,
+  expanded, onToggleExpand, onSaveLocation, onSetNeedsChasing,
+}) {
   const status = deriveStatus(c)
   const level = urgency(c)
   const inDept = daysInDept(c)
@@ -425,6 +481,7 @@ function Row({ consignment: c, assignments, people, history, canManage, expanded
   const parts = partsFor(c.id, assignments)
   const progress = valuationProgress(c.id, assignments)
   const action = nextActionShared(c, assignments, people)
+  const isAwaiting = status === STATUS.AWAITING_VENDOR
 
   const names = parts
     .map((p) => people.find((u) => u.id === p.specialist_id)?.full_name)
@@ -462,6 +519,11 @@ function Row({ consignment: c, assignments, people, history, canManage, expanded
                 <Badge tone="navy">Split {progress.done}/{progress.total}</Badge>
               </span>
             )}
+            {c.needs_chasing && (
+              <span style={{ marginLeft: 'var(--space-2)' }}>
+                <Badge tone="gold">Chasing</Badge>
+              </span>
+            )}
           </p>
           <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
             {c.vendor_name} · {c.box_count} {plural(c.box_count, 'box')} · in {formatDate(c.arrival_date)}
@@ -481,47 +543,74 @@ function Row({ consignment: c, assignments, people, history, canManage, expanded
           <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
             {inDept} {plural(inDept, 'day')} in dept
           </p>
+          <p style={{ fontSize: 'var(--size-xs)', color: c.storage_location ? 'var(--text-muted)' : 'var(--gold)' }}>
+            {c.storage_location || 'No location'}
+          </p>
           {moved && (
             <p style={{ fontSize: 'var(--size-xs)', color: 'var(--text-muted)' }}>Reassigned</p>
           )}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          {status === STATUS.COMPLETE && !c.storage_location && <Badge tone="gold">No location</Badge>}
           {!canManage && (
             <span style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
               {names.join(', ') || 'Unassigned'}
             </span>
           )}
-          {canManage && (
-            <button
-              onClick={onToggleExpand}
-              aria-expanded={expanded}
-              style={{
-                height: '38px',
-                padding: '0 var(--space-3)',
-                borderRadius: 'var(--radius)',
-                border: '1px solid var(--border-strong)',
-                fontSize: 'var(--size-sm)',
-                fontWeight: 500,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {expanded ? 'Close' : names.length > 1 ? `${names.length} people` : names[0]?.split(' ')[0] || 'Assign'}
-            </button>
-          )}
+          <button
+            onClick={onToggleExpand}
+            aria-expanded={expanded}
+            style={{
+              height: '38px',
+              padding: '0 var(--space-3)',
+              borderRadius: 'var(--radius)',
+              border: '1px solid var(--border-strong)',
+              fontSize: 'var(--size-sm)',
+              fontWeight: 500,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {expanded ? 'Close' : canManage ? (names.length > 1 ? `${names.length} people` : names[0]?.split(' ')[0] || 'Assign') : 'Details'}
+          </button>
         </div>
       </div>
 
-      {expanded && canManage && (
+      {expanded && (
         <div
           style={{
             borderTop: '1px solid var(--border)',
             padding: 'var(--space-4)',
             background: 'var(--page)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--space-4)',
           }}
         >
-          <SplitPanel consignment={c} />
+          <div style={{ maxWidth: '340px' }}>
+            <LocationField consignment={c} onSave={onSaveLocation} />
+          </div>
+
+          {isAwaiting && chaser && (
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                fontSize: 'var(--size-sm)',
+                fontWeight: 500,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={c.needs_chasing}
+                onChange={(e) => onSetNeedsChasing(c.id, e.target.checked)}
+                style={{ width: '18px', height: '18px' }}
+              />
+              {chaserLabel(chaser)}
+            </label>
+          )}
+
+          {canManage && <SplitPanel consignment={c} />}
         </div>
       )}
     </div>
