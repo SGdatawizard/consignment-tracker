@@ -1,6 +1,7 @@
 import Badge from './Badge'
 import Countdown from './Countdown'
 import ToggleButton from './ToggleButton'
+import NotesField from './NotesField'
 import { deriveStatus, formatDate, STATUS, plural } from '../lib/consignments'
 import { partsFor, myPart, valuationProgress, outstandingValuers } from '../lib/assignments'
 import { chaserLabel } from '../lib/chase'
@@ -163,6 +164,16 @@ export default function ConsignmentCard({
             : `Waiting on ${waiting.length} valuations before the vendor can be emailed.`}
         </p>
       )}
+
+      <div
+        style={{
+          marginTop: 'var(--space-4)',
+          paddingTop: 'var(--space-4)',
+          borderTop: '1px solid var(--border)',
+        }}
+      >
+        <NotesField consignment={c} canEdit={!!mine} />
+      </div>
 
       {footer && (
         <div style={{ marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border)' }}>
