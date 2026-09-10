@@ -238,3 +238,402 @@ export default function Overview() {
                   <GroupHeader
                     name={group.name}
                     count={group.items.length}
+                    summary={consignmentSummary(group.items)}
+                    collapsed={isCollapsed}
+                    onToggle={() => toggleGroup(group.id)}
+                  />
+                )}
+
+                {!isCollapsed && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+                    {group.items.map((c) => (
+                      <Row
+                        key={`${group.id}-${c.id}`}
+                        consignment={c}
+                        assignments={assignments}
+                        people={people}
+                        history={history}
+                        chaser={chaser}
+                        canManage={canManage}
+                        currentUserId={currentUserId}
+                        expanded={expandedRow === `${group.id}-${c.id}`}
+                        onToggleExpand={() =>
+                          setExpandedRow((prev) => (prev === `${group.id}-${c.id}` ? null : `${group.id}-${c.id}`))
+                        }
+                        onSaveLocation={setStorageLocation}
+                        onSetNeedsChasing={setNeedsChasing}
+                      />
+                    ))}
+                  </div>
+                )}
+              </section>
+            )
+          })}
+
+          {stats.noLocation > 0 && filter !== 'no_location' && (
+            <p style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>
+              {stats.noLocation} {plural(stats.noLocation, 'consignment')} with no storage location recorded.{' '}
+              <button
+                onClick={() => setFilter('no_location')}
+                style={{ color: 'var(--navy)', textDecoration: 'underline', fontWeight: 500 }}
+              >
+                Show them
+              </button>
+            </p>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
+function consignmentSummary(items) {
+  const overdue = items.filter((c) => urgency(c) === 'overdue').length
+  const soon = items.filter((c) => urgency(c) === 'soon').length
+  const chasing = items.filter((c) => c.needs_chasing).length
+  const bits = []
+  if (overdue) bits.push({ text: `${overdue} overdue`, tone: 'danger' })
+  if (soon) bits.push({ text: `${soon} due soon`, tone: 'gold' })
+  if (chasing) bits.push({ text: `${chasing} chasing`, tone: 'gold' })
+  return bits
+}
+
+function taskSummary(items) {
+  const overdue = items.filter((t) => taskUrgency(t) === 'overdue').length
+  const soon = items.filter((t) => taskUrgency(t) === 'soon').length
+  const bits = []
+  if (overdue) bits.push({ text: `${overdue} overdue`, tone: 'danger' })
+  if (soon) bits.push({ text: `${soon} due soon`, tone: 'gold' })
+  return bits
+}
+
+function GroupHeader({ name, count, summary, collapsed, onToggle }) {
+  return (
+    <button
+      onClick={onToggle}
+      aria-expanded={!collapsed}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 'var(--space-3)',
+        width: '100%',
+        minHeight: 'var(--control-height)',
+        padding: 'var(--space-2) var(--space-3)',
+        marginBottom: collapsed ? 0 : 'var(--space-3)',
+        borderRadius: 'var(--radius)',
+        background: collapsed ? 'var(--surface-sunken)' : 'transparent',
+        textAlign: 'left',
+      }}
+    >
+      <span
+        aria-hidden="true"
+        style={{
+          display: 'inline-block',
+          width: '14px',
+          color: 'var(--text-muted)',
+          transform: collapsed ? 'rotate(-90deg)' : 'none',
+          transition: 'transform 120ms ease',
+          fontSize: 'var(--size-xs)',
+        }}
+      >
+        ▼
+      </span>
+
+      <span style={{ fontSize: 'var(--size-lg)', fontWeight: 700 }}>{name}</span>
+      <span style={{ color: 'var(--text-muted)', fontSize: 'var(--size-sm)' }}>{count}</span>
+
+      <span style={{ display: 'flex', gap: 'var(--space-2)', marginLeft: 'auto', flexWrap: 'wrap' }}>
+        {summary.map((bit) => (
+          <Badge key={bit.text} tone={bit.tone}>{bit.text}</Badge>
+        ))}
+      </span>
+    </button>
+  )
+}
+
+const FILTERS = [
+  { id: 'open', label: 'Open' },
+  { id: 'overdue', label: 'Overdue' },
+  { id: 'awaiting', label: 'Awaiting vendor' },
+  { id: 'chasing', label: 'To chase' },
+  { id: 'shared', label: 'Shared' },
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'complete', label: 'Complete' },
+]
+
+function Filters({ value, onChange }) {
+  return (
+    <div role="group" aria-label="Filter consignments" style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+      {FILTERS.map((f) => {
+        const active = value === f.id
+        return (
+          <button
+            key={f.id}
+            onClick={() => onChange(f.id)}
+            aria-pressed={active}
+            style={{
+              height: '38px',
+              padding: '0 var(--space-4)',
+              borderRadius: 'var(--radius)',
+              border: `1px solid ${active ? 'var(--navy)' : 'var(--border-strong)'}`,
+              background: active ? 'var(--navy)' : 'var(--surface)',
+              color: active ? 'var(--text-on-dark)' : 'var(--text)',
+              fontWeight: 500,
+              fontSize: 'var(--size-sm)',
+            }}
+          >
+            {f.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+function TaskList({ tasks, specialists, canManage, collapsed, onToggleGroup, onReassign }) {
+  if (tasks.length === 0) {
+    return (
+      <p
+        style={{
+          background: 'var(--surface-sunken)',
+          borderRadius: 'var(--radius)',
+          padding: 'var(--space-5)',
+          color: 'var(--text-muted)',
+        }}
+      >
+        No outstanding tasks.
+      </p>
+    )
+  }
+
+  return (
+    <>
+      {specialists.map((s) => {
+        const items = sortTasks(tasks.filter((t) => t.assigned_to === s.id))
+        if (items.length === 0) return null
+        const isCollapsed = collapsed.includes(s.id)
+
+        return (
+          <section key={s.id} style={{ marginBottom: 'var(--space-5)' }}>
+            <GroupHeader
+              name={s.full_name}
+              count={items.length}
+              summary={taskSummary(items)}
+              collapsed={isCollapsed}
+              onToggle={() => onToggleGroup(s.id)}
+            />
+
+            {!isCollapsed && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+                {items.map((t) => (
+                  <TaskCard
+                    key={t.id}
+                    task={t}
+                    footer={
+                      canManage ? (
+                        <TaskAssignee task={t} specialists={specialists} onReassign={onReassign} />
+                      ) : null
+                    }
+                  />
+                ))}
+              </div>
+            )}
+          </section>
+        )
+      })}
+    </>
+  )
+}
+
+function TaskAssignee({ task, specialists, onReassign }) {
+  return (
+    <>
+      <label htmlFor={`task-assign-${task.id}`} className="sr-only">
+        Reassign {task.title}
+      </label>
+      <select
+        id={`task-assign-${task.id}`}
+        value={task.assigned_to}
+        onChange={(e) => onReassign(task.id, e.target.value)}
+        style={{
+          height: '38px',
+          padding: '0 var(--space-2)',
+          borderRadius: 'var(--radius)',
+          border: '1px solid var(--border-strong)',
+          background: 'var(--surface)',
+          maxWidth: '180px',
+        }}
+      >
+        {specialists.map((s) => (
+          <option key={s.id} value={s.id}>{s.full_name}</option>
+        ))}
+      </select>
+    </>
+  )
+}
+
+function Row({
+  consignment: c, assignments, people, history, chaser, canManage, currentUserId,
+  expanded, onToggleExpand, onSaveLocation, onSetNeedsChasing,
+}) {
+  const status = deriveStatus(c)
+  const level = urgency(c)
+  const inDept = daysInDept(c)
+  const moved = wasReassigned(c, history)
+  const parts = partsFor(c.id, assignments)
+  const progress = valuationProgress(c.id, assignments)
+  const action = nextActionShared(c, assignments, people)
+  const isAwaiting = status === STATUS.AWAITING_VENDOR
+  const amAssigned = parts.some((p) => p.specialist_id === currentUserId)
+
+  const names = parts
+    .map((p) => people.find((u) => u.id === p.specialist_id)?.full_name)
+    .filter(Boolean)
+
+  const accent = {
+    overdue: 'var(--danger)',
+    soon: 'var(--gold)',
+    frozen: 'var(--navy-soft)',
+    ok: 'var(--border)',
+  }[level]
+
+  return (
+    <div
+      style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderLeft: `4px solid ${accent}`,
+      }}
+    >
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1.4fr) minmax(0, 1fr) auto',
+          gap: 'var(--space-4)',
+          alignItems: 'center',
+          padding: 'var(--space-3) var(--space-4)',
+        }}
+      >
+        <div>
+          <p className="receipt">
+            {c.receipt_number}
+            {parts.length > 1 && (
+              <span style={{ marginLeft: 'var(--space-2)' }}>
+                <Badge tone="navy">Split {progress.done}/{progress.total}</Badge>
+              </span>
+            )}
+            {c.needs_chasing && (
+              <span style={{ marginLeft: 'var(--space-2)' }}>
+                <Badge tone="gold">Chasing</Badge>
+              </span>
+            )}
+          </p>
+          <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+            {c.vendor_name} · {c.box_count} {plural(c.box_count, 'box')} · in {formatDate(c.arrival_date)}
+          </p>
+        </div>
+
+        <div>
+          <p style={{ fontSize: 'var(--size-sm)' }}>
+            {status === STATUS.COMPLETE ? 'Complete' : action}
+          </p>
+          <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+            {status === STATUS.COMPLETE ? STATUS_LABEL[status] : countdownLabel(c)}
+          </p>
+        </div>
+
+        <div>
+          <p style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+            {inDept} {plural(inDept, 'day')} in dept
+          </p>
+          <p style={{ fontSize: 'var(--size-xs)', color: c.storage_location ? 'var(--text-muted)' : 'var(--gold)' }}>
+            {c.storage_location || 'No location'}
+          </p>
+          {moved && (
+            <p style={{ fontSize: 'var(--size-xs)', color: 'var(--text-muted)' }}>Reassigned</p>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+          {c.notes && <Badge tone="neutral">Note</Badge>}
+          {!canManage && (
+            <span style={{ fontSize: 'var(--size-sm)', color: 'var(--text-muted)' }}>
+              {names.join(', ') || 'Unassigned'}
+            </span>
+          )}
+          <button
+            onClick={onToggleExpand}
+            aria-expanded={expanded}
+            style={{
+              height: '38px',
+              padding: '0 var(--space-3)',
+              borderRadius: 'var(--radius)',
+              border: '1px solid var(--border-strong)',
+              fontSize: 'var(--size-sm)',
+              fontWeight: 500,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {expanded ? 'Close' : canManage ? (names.length > 1 ? `${names.length} people` : names[0]?.split(' ')[0] || 'Assign') : 'Details'}
+          </button>
+        </div>
+      </div>
+
+      {!expanded && c.notes && (
+        <p
+          style={{
+            padding: '0 var(--space-4) var(--space-3)',
+            fontSize: 'var(--size-sm)',
+            color: 'var(--text-muted)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {c.notes}
+        </p>
+      )}
+
+      {expanded && (
+        <div
+          style={{
+            borderTop: '1px solid var(--border)',
+            padding: 'var(--space-4)',
+            background: 'var(--page)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--space-4)',
+          }}
+        >
+          <NotesField consignment={c} canEdit={canManage || amAssigned} />
+
+          <div style={{ maxWidth: '340px' }}>
+            <LocationField consignment={c} onSave={onSaveLocation} />
+          </div>
+
+          {isAwaiting && chaser && (
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                fontSize: 'var(--size-sm)',
+                fontWeight: 500,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={c.needs_chasing}
+                onChange={(e) => onSetNeedsChasing(c.id, e.target.checked)}
+                style={{ width: '18px', height: '18px' }}
+              />
+              {chaserLabel(chaser)}
+            </label>
+          )}
+
+          {canManage && <SplitPanel consignment={c} />}
+        </div>
+      )}
+    </div>
+  )
+}
