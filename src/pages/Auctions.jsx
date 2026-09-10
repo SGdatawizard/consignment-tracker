@@ -15,6 +15,7 @@ const BLANK = {
   box_count: '',
   arrival_date: today(),
   specialist_id: '',
+  storage_location: '',
 }
 
 export default function Auctions() {
@@ -62,6 +63,7 @@ export default function Auctions() {
       vendor_name: form.vendor_name.trim(),
       box_count: Number(form.box_count),
       arrival_date: form.arrival_date,
+      storage_location: form.storage_location.trim() || null,
       specialist_id: form.specialist_id,
     })
 
@@ -198,6 +200,28 @@ export default function Auctions() {
             />
           </Field>
         </div>
+
+        <Field
+          id="location"
+          label="Storage location"
+          hint="Optional. Can be added or changed later from the overview."
+        >
+          <input
+            id="location"
+            value={form.storage_location}
+            onChange={(e) => set('storage_location', e.target.value)}
+            placeholder="Add Location"
+            autoComplete="off"
+            list="known-locations"
+            aria-describedby="location-hint"
+            style={inputStyle}
+          />
+          <datalist id="known-locations">
+            {[...new Set(consignments.map((c) => c.storage_location).filter(Boolean))].sort().map((v) => (
+              <option key={v} value={v} />
+            ))}
+          </datalist>
+        </Field>
 
         <Field
           id="assigned"
