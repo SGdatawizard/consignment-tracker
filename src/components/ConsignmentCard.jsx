@@ -3,14 +3,17 @@ import Countdown from './Countdown'
 import ToggleButton from './ToggleButton'
 import { deriveStatus, formatDate, STATUS, plural } from '../lib/consignments'
 import { partsFor, myPart, valuationProgress, outstandingValuers } from '../lib/assignments'
+import { chaserLabel } from '../lib/chase'
 
 export default function ConsignmentCard({
   consignment: c,
   assignments,
   people,
   currentUserId,
+  chaser,
   onSetMyValued,
   onSetSharedFlag,
+  onSetNeedsChasing,
   footer,
 }) {
   const status = deriveStatus(c)
@@ -58,7 +61,10 @@ export default function ConsignmentCard({
             {c.vendor_name} · {c.box_count} {plural(c.box_count, 'box')} · arrived {formatDate(c.arrival_date)}
           </p>
         </div>
-        {isComplete ? <Badge tone="success">Complete</Badge> : <Countdown consignment={c} />}
+        <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+          {c.needs_chasing && <Badge tone="gold">Chasing</Badge>}
+          {isComplete ? <Badge tone="success">Complete</Badge> : <Countdown consignment={c} />}
+        </div>
       </header>
 
       {mine?.remit && (
@@ -137,6 +143,16 @@ export default function ConsignmentCard({
               />
             </>
           )}
+        </div>
+      )}
+
+      {isAwaiting && chaser && onSetNeedsChasing && (
+        <div style={{ marginTop: 'var(--space-3)', maxWidth: '320px' }}>
+          <ToggleButton
+            label={chaserLabel(chaser)}
+            checked={c.needs_chasing}
+            onChange={(v) => onSetNeedsChasing(c.id, v)}
+          />
         </div>
       )}
 
