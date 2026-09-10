@@ -78,6 +78,29 @@ export function StoreProvider({ children }) {
     }
   }
 
+  // -- notes -------------------------------------------------
+
+  async function setNotes(consignmentId, text) {
+    const before = consignments.find((c) => c.id === consignmentId)
+    if (!before) return false
+
+    const cleaned = (text || '').trim() || null
+    if (cleaned === (before.notes || null)) return true
+
+    const { data, error: err } = await supabase.rpc('set_consignment_notes', {
+      p_consignment: consignmentId,
+      p_notes: cleaned,
+    })
+
+    if (err) {
+      setError(err.message)
+      return false
+    }
+
+    if (data) replaceConsignment(data)
+    return true
+  }
+
   // -- my valuation ------------------------------------------
 
   async function setMyValued(consignmentId, value) {
@@ -421,6 +444,7 @@ export function StoreProvider({ children }) {
     setSharedFlag,
     setNeedsChasing,
     markChased,
+    setNotes,
     addConsignment,
     setStorageLocation,
     addAssignment,
