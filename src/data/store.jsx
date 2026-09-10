@@ -45,6 +45,12 @@ export function StoreProvider({ children }) {
   useEffect(() => { load() }, [load])
 
   const specialists = people.filter((p) => ASSIGNABLE_ROLES.includes(p.role))
+  const chaser = people.find((p) => p.is_chaser) || null
+  const isChaser = !!profile.is_chaser
+
+  function replaceConsignment(row) {
+    setConsignments((prev) => prev.map((c) => (c.id === row.id ? row : c)))
+  }
 
   async function refreshConsignment(id) {
     const [{ data: c }, { data: a }] = await Promise.all([
@@ -52,7 +58,7 @@ export function StoreProvider({ children }) {
       supabase.from('consignment_assignments').select('*').eq('consignment_id', id),
     ])
 
-    if (c) setConsignments((prev) => prev.map((row) => (row.id === id ? c : row)))
+    if (c) replaceConsignment(c)
     if (a) {
       setAssignments((prev) => [...prev.filter((row) => row.consignment_id !== id), ...a])
     }
@@ -126,12 +132,12 @@ export function StoreProvider({ children }) {
       .single()
 
     if (err) {
-      setConsignments((prev) => prev.map((c) => (c.id === consignmentId ? before : c)))
+      replaceConsignment(before)
       setError(err.message)
       return
     }
 
-    setConsignments((prev) => prev.map((c) => (c.id === consignmentId ? data : c)))
+    replaceConsignment(data)
 
     if (data.status !== before.status) {
       setLastChange({
@@ -169,9 +175,37 @@ export function StoreProvider({ children }) {
     setLastChange(null)
   }
 
+  // -- chasing -----------------------------------------------
+
+  async function setNeedsChasing(consignmentId, value) {
+    const { data, error: err } = await supabase.rpc('set_needs_chasing', {
+      p_consignment: consignmentId,
+      p_value: value,
+    })
+
+    if (err) {
+      setError(err.message)
+      return
+    }
+
+    if (data) replaceConsignment(data)
+  }
+
+  async function markChased(consignmentId) {
+    const { data, error: err } = await supabase.rpc('mark_chased', {
+      p_consignment: consignmentId,
+    })
+
+    if (err) {
+      setError(err.message)
+      return
+    }
+
+    if (data) replaceConsignment(data)
+  }
+
   // -- consignments ------------------------------------------
 
-  // Returns { record, assigned } so the caller can tell the two apart
   async function addConsignment({ specialist_id, ...fields }) {
     const { data, error: err } = await supabase
       .from('consignments')
@@ -200,7 +234,7 @@ export function StoreProvider({ children }) {
   }
 
   async function setStorageLocation(consignmentId, location) {
-    const value = location || null
+    const value = (location || '').trim() || null
     const before = consignments.find((c) => c.id === consignmentId)
     if (!before || before.storage_location === value) return
 
@@ -208,15 +242,18 @@ export function StoreProvider({ children }) {
       prev.map((c) => (c.id === consignmentId ? { ...c, storage_location: value } : c))
     )
 
-    const { error: err } = await supabase
-      .from('consignments')
-      .update({ storage_location: value })
-      .eq('id', consignmentId)
+    const { data, error: err } = await supabase.rpc('set_storage_location', {
+      p_consignment: consignmentId,
+      p_location: value,
+    })
 
     if (err) {
-      setConsignments((prev) => prev.map((c) => (c.id === consignmentId ? before : c)))
+      replaceConsignment(before)
       setError(err.message)
+      return
     }
+
+    if (data) replaceConsignment(data)
   }
 
   // -- assignments -------------------------------------------
@@ -372,6 +409,8 @@ export function StoreProvider({ children }) {
     tasks,
     people,
     specialists,
+    chaser,
+    isChaser,
     currentUser: profile,
     currentUserId,
     loading,
@@ -380,6 +419,8 @@ export function StoreProvider({ children }) {
     reload: load,
     setMyValued,
     setSharedFlag,
+    setNeedsChasing,
+    markChased,
     addConsignment,
     setStorageLocation,
     addAssignment,
